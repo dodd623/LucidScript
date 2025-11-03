@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+openai-whisper
+torch
+python-docx
+reportlab
