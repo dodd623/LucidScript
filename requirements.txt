@@ -4,3 +4,4 @@ openai-whisper
 torch
 python-docx
 reportlab
+python-multipart
