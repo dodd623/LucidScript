@@ -5,3 +5,32 @@ torch
 python-docx
 reportlab
 python-multipart
+
+# Optional: speaker diarization (for /export_docx_from_audio_v3 with "Detect speakers")
+# These are heavier installs; ok to leave commented if you won’t use diarization.
+# pyannote.audio==3.1.1
+# librosa
+# soundfile
+# torchmetrics
+
+# LucidScript
+
+FastAPI microapp: upload audio → Whisper transcription → .docx export.
+Two modes:
+- Standard paragraphs (v2)
+- Deposition/interview with speaker labels (v3, optional diarization)
+
+## Setup
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Optional (for speaker detection)
+# Install ffmpeg (winget/choco/brew/apt) and set HUGGINGFACE_TOKEN if using pyannote.
+
+## Run
+uvicorn main:app --reload --host 0.0.0.0 --port 8001
+Open http://localhost:8001/ui_async
+
+## Notes
+- Whisper CPU mode may log “FP16 not supported” (expected).
+- If diarization deps/token aren’t present, v3 will still work and fall back to generic “Speaker 1” labels.
