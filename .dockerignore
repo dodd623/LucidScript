@@ -1,5 +1,12 @@
-venv/
+.vscode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.log
+.venv/
+venv/
+env/
 output/
-*.docx
+.idea/
+.DS_Store

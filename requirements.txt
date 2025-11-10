@@ -5,6 +5,7 @@ torch
 python-docx
 reportlab
 python-multipart
+yt-dlp
 
 # Optional: speaker diarization (for /export_docx_from_audio_v3 with "Detect speakers")
 # These are heavier installs; ok to leave commented if you won’t use diarization.
