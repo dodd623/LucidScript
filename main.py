@@ -8,6 +8,14 @@ from datetime import datetime
 from fastapi import Form
 from fastapi.responses import JSONResponse
 
+# extra imports for youtube (added)
+from typing import Optional
+import glob
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
 # start the app
 app = FastAPI()
 
@@ -510,5 +518,206 @@ async def export_docx_from_audio_v3(file: UploadFile = File(...), language: str 
         try:
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
+        except Exception:
+            pass
+
+# -------- youtube support (added) --------
+
+def _download_youtube_audio_to_wav(url: str) -> str:
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp is not installed. Add 'yt-dlp' to requirements.txt and pip install.")
+    tmp_dir = tempfile.mkdtemp(prefix="ls_ytdlp_")
+    outtmpl = os.path.join(tmp_dir, "%(id)s.%(ext)s")
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "192"}],
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+    vid_id = info.get("id")
+    candidate = os.path.join(tmp_dir, f"{vid_id}.wav")
+    if os.path.exists(candidate):
+        return candidate
+    wavs = glob.glob(os.path.join(tmp_dir, "*.wav"))
+    if wavs:
+        return wavs[0]
+    audio_any = glob.glob(os.path.join(tmp_dir, "*.*"))
+    if audio_any:
+        return audio_any[0]
+    raise RuntimeError("Failed to fetch/convert audio from YouTube URL.")
+
+@app.get("/ui_youtube", response_class=HTMLResponse)
+def ui_youtube():
+    return """
+    <html>
+      <head>
+        <title>LucidScript — YouTube</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          :root { color-scheme: dark; }
+          body { margin:0; padding:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+                 background:#0f1115; color:#eaeef3; display:flex; min-height:100vh; }
+          .wrap { margin:auto; width:min(760px, 94%); }
+          h1 { font-weight:700; letter-spacing:.3px; margin-bottom:.25rem; }
+          p { opacity:.85; margin-top:.2rem; margin-bottom:1rem; }
+          .card { background:#171a21; border:1px solid #232736; border-radius:14px; padding:24px; }
+          input[type=text], select {
+            width:100%; background:#0f1115; color:#eaeef3; border:1px solid #2a3042; padding:12px; border-radius:10px;
+          }
+          label { font-size:12px; opacity:.8; }
+          button { margin-top:14px; width:100%; padding:12px 16px; border:0; border-radius:10px;
+                   background:#4c83ff; color:white; font-weight:600; cursor:pointer; }
+          button:hover { background:#3a6ef6; }
+          small { display:block; margin-top:10px; opacity:.65; }
+          a { color:#9ec1ff; text-decoration:none; }
+          .status { margin-top:12px; font-size:14px; opacity:.9; }
+          .success { color:#71eea0; }
+          .error { color:#ff8a8a; }
+          .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <h1>LucidScript</h1>
+          <p>Paste a YouTube link → (optional) set language/translate → download .docx — no page reload.</p>
+          <div class="card">
+            <form id="yt-form">
+              <label>YouTube URL</label>
+              <input id="url" type="text" name="url" placeholder="https://www.youtube.com/watch?v=..." required />
+
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
+                <div>
+                  <label>Language (choose or Auto)</label>
+                  <select id="language" name="language">
+                    <option value="">Auto-detect</option>
+                    <option value="en">English — en</option>
+                    <option value="es">Spanish — es</option>
+                    <option value="pt">Portuguese — pt</option>
+                    <option value="zh">Mandarin Chinese — zh</option>
+                    <option value="fr">French — fr</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:end;gap:8px">
+                  <input type="checkbox" id="translate" name="translate" value="true" />
+                  <label for="translate">Translate to English</label>
+                </div>
+              </div>
+
+              <button type="submit">Transcribe YouTube & Export</button>
+            </form>
+
+            <div id="status" class="status"></div>
+            <div id="result" style="margin-top:10px"></div>
+
+            <small>Prefer the API? See <a href="/docs">/docs</a>.</small>
+          </div>
+        </div>
+
+        <script>
+          const form = document.getElementById('yt-form');
+          const statusEl = document.getElementById('status');
+          const resultEl = document.getElementById('result');
+
+          form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            statusEl.className = 'status';
+            resultEl.innerHTML = '';
+            statusEl.textContent = 'Fetching audio…';
+
+            const fd = new FormData(form);
+            fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
+
+            try {
+              statusEl.textContent = 'Transcribing with Whisper…';
+              const resp = await fetch('/export_docx_from_youtube', { method: 'POST', body: fd });
+              const data = await resp.json();
+
+              if (!resp.ok) {
+                statusEl.className = 'status error';
+                statusEl.textContent = data.detail || 'Transcription failed.';
+                return;
+              }
+
+              statusEl.className = 'status success';
+              statusEl.textContent = 'Done. Document ready.';
+
+              const lang = data.language || 'unknown';
+              const dur = (data.duration_sec !== null && data.duration_sec !== undefined) ? data.duration_sec : '—';
+              const fname = data.docx_filename;
+
+              resultEl.innerHTML = `
+                <div class="mono">Language: ${lang} | Duration: ${dur}s</div>
+                <div style="margin-top:8px">
+                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${fname}</a>
+                </div>
+              `;
+            } catch (err) {
+              statusEl.className = 'status error';
+              statusEl.textContent = 'Unexpected error: ' + (err?.message || err);
+            }
+          });
+        </script>
+      </body>
+    </html>
+    """
+
+@app.post("/export_docx_from_youtube")
+async def export_docx_from_youtube(
+    url: str = Form(...),
+    language: Optional[str] = Form(None),
+    translate: Optional[str] = Form(None),
+):
+    audio_path = None
+    try:
+        audio_path = _download_youtube_audio_to_wav(url)
+
+        kwargs = {}
+        if language:
+            kwargs["language"] = language
+        if (translate or "").lower() == "true":
+            kwargs["task"] = "translate"
+
+        result = model.transcribe(audio_path, **kwargs)
+        text = (result.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="No speech detected or empty transcript.")
+
+        doc = Document()
+        doc.add_heading("LucidScript Transcript", 0)
+        doc.add_paragraph(datetime.now().strftime("%Y-%m-%d %H:%M"))
+        for p in to_paragraphs(text):
+            doc.add_paragraph(p)
+
+        out = OUTPUT_DIR / f"lucidscript_{uuid.uuid4().hex[:8]}.docx"
+        doc.save(out.as_posix())
+
+        return JSONResponse({
+            "message": "YouTube transcription and document export complete.",
+            "docx_path": str(out),
+            "docx_filename": out.name,
+            "language": result.get("language", "unknown"),
+            "duration_sec": round(float(result.get("duration", 0)), 2) if "duration" in result else None,
+            "translated": ((translate or "").lower() == "true"),
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"YouTube transcription failed: {e}")
+    finally:
+        try:
+            if audio_path and os.path.exists(audio_path):
+                base_dir = pathlib.Path(audio_path).parent
+                for p in base_dir.glob("*"):
+                    try:
+                        os.remove(p.as_posix())
+                    except Exception:
+                        pass
+                try:
+                    os.rmdir(base_dir.as_posix())
+                except Exception:
+                    pass
         except Exception:
             pass
