@@ -5,6 +5,7 @@ fastapi
 uvicorn
 pydantic
 python-docx
+python-multipart==0.0.9
 yt-dlp
 ffmpeg-python
 requests
