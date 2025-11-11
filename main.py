@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
-import tempfile, os, pathlib, uuid, re, glob, subprocess, shlex, textwrap
+import tempfile, os, pathlib, uuid, re, glob, subprocess, shlex, textwrap, threading
 from typing import Optional, List, Tuple
 import whisper
 from docx import Document
@@ -13,7 +13,17 @@ except ImportError:
     yt_dlp = None
 
 app = FastAPI()
-model = whisper.load_model("tiny")
+
+# lazy model load
+_model = None
+_model_lock = threading.Lock()
+def get_model():
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                _model = whisper.load_model(os.getenv("WHISPER_MODEL", "tiny"))
+    return _model
 
 BASE_DIR = pathlib.Path(__file__).parent.resolve()
 OUTPUT_DIR = (BASE_DIR / "output").resolve()
@@ -24,6 +34,10 @@ try:
     UI_TEMPLATE = UI_TEMPLATE_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
     UI_TEMPLATE = None
+
+@app.get("/health")
+def health():
+    return {"ok": True}
 
 @app.get("/")
 def home():
@@ -92,11 +106,12 @@ def to_paragraphs(text: str):
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename or "")[-1]
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
-        result = model.transcribe(tmp_path)
+        result = get_model().transcribe(tmp_path)
         text = (result.get("text") or "").strip()
         return {"transcript": text}
     finally:
@@ -125,7 +140,7 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
-        result = model.transcribe(tmp_path)
+        result = get_model().transcribe(tmp_path)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="No speech detected or empty transcript.")
@@ -330,7 +345,7 @@ async def export_docx_from_audio_v2(file: UploadFile = File(...), language: str 
             kwargs["language"] = language
         if (translate or "").lower() == "true":
             kwargs["task"] = "translate"
-        result = model.transcribe(tmp_path, **kwargs)
+        result = get_model().transcribe(tmp_path, **kwargs)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="No speech detected or empty transcript.")
@@ -360,6 +375,7 @@ async def export_docx_from_audio_v2(file: UploadFile = File(...), language: str 
         except Exception:
             pass
 
+# diarization helpers
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 try:
     from pyannote.audio import Pipeline as PyannotePipeline  # type: ignore
@@ -455,7 +471,7 @@ async def export_docx_from_audio_v3(file: UploadFile = File(...), language: str 
         if (translate or "").lower() == "true":
             kwargs["task"] = "translate"
 
-        result = model.transcribe(tmp_path, **kwargs)
+        result = get_model().transcribe(tmp_path, **kwargs)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="No speech detected or empty transcript.")
@@ -498,32 +514,7 @@ async def export_docx_from_audio_v3(file: UploadFile = File(...), language: str 
         except Exception:
             pass
 
-def _download_youtube_audio_to_wav(url: str) -> str:
-    if yt_dlp is None:
-        raise RuntimeError("yt-dlp is not installed. Add 'yt-dlp' to requirements.txt and pip install.")
-    tmp_dir = tempfile.mkdtemp(prefix="ls_ytdlp_")
-    outtmpl = os.path.join(tmp_dir, "%(id)s.%(ext)s")
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": outtmpl,
-        "quiet": True,
-        "no_warnings": True,
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "192"}],
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-    vid_id = info.get("id")
-    candidate = os.path.join(tmp_dir, f"{vid_id}.wav")
-    if os.path.exists(candidate):
-        return candidate
-    wavs = glob.glob(os.path.join(tmp_dir, "*.wav"))
-    if wavs:
-        return wavs[0]
-    audio_any = glob.glob(os.path.join(tmp_dir, "*.*"))
-    if audio_any:
-        return audio_any[0]
-    raise RuntimeError("Failed to fetch/convert audio from YouTube URL.")
-
+# youtube helpers
 def _vtt_to_text(path: str) -> str:
     out_lines = []
     try:
@@ -585,6 +576,32 @@ def _fetch_youtube_captions_text(url: str, preferred_lang: Optional[str]) -> str
     except Exception:
         pass
     return text
+
+def _download_youtube_audio_to_wav(url: str) -> str:
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp is not installed. Add 'yt-dlp' to requirements.txt and pip install.")
+    tmp_dir = tempfile.mkdtemp(prefix="ls_ytdlp_")
+    outtmpl = os.path.join(tmp_dir, "%(id)s.%(ext)s")
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "quiet": True,
+        "no_warnings": True,
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "192"}],
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+    vid_id = info.get("id")
+    candidate = os.path.join(tmp_dir, f"{vid_id}.wav")
+    if os.path.exists(candidate):
+        return candidate
+    wavs = glob.glob(os.path.join(tmp_dir, "*.wav"))
+    if wavs:
+        return wavs[0]
+    audio_any = glob.glob(os.path.join(tmp_dir, "*.*"))
+    if audio_any:
+        return audio_any[0]
+    raise RuntimeError("Failed to fetch/convert audio from YouTube URL.")
 
 @app.get("/ui_youtube", response_class=HTMLResponse)
 def ui_youtube():
@@ -662,7 +679,7 @@ def ui_youtube():
             e.preventDefault();
             statusEl.className = 'status';
             resultEl.innerHTML = '';
-            statusEl.textContent = 'Fetching audio…';
+            statusEl.textContent = 'Fetching captions…';
 
             const fd = new FormData(form);
             fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
@@ -717,13 +734,13 @@ async def export_docx_from_youtube(
                 kwargs["language"] = language
             if (translate or "").lower() == "true":
                 kwargs["task"] = "translate"
-            result = model.transcribe(audio_path, **kwargs)
+            result = get_model().transcribe(audio_path, **kwargs)
             text = (result.get("text") or "").strip()
             lang = result.get("language", "unknown")
             dur = round(float(result.get("duration", 0)), 2) if "duration" in result else None
         else:
             text = cap_text
-            lang = language or "unknown"
+            lang = (language or "unknown")
             dur = None
 
         if not text:
