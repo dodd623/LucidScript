@@ -25,6 +25,9 @@ except FileNotFoundError:
 def home():
     return {"ok": True, "msg": "LucidScript backend is up"}
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 @app.get("/ui", response_class=HTMLResponse)
 def upload_ui():

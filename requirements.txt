@@ -1,12 +1,5 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.3.1+cpu
-openai-whisper
 fastapi
-uvicorn
-pydantic
+uvicorn[standard]
+python-multipart
+openai-whisper
 python-docx
-python-multipart==0.0.9
-yt-dlp
-ffmpeg-python
-youtube-transcript-api
-requests
