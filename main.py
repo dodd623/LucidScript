@@ -21,13 +21,14 @@ except FileNotFoundError:
     UI_TEMPLATE = None
 
 
-@app.get("/")
-def home():
-    return {"ok": True, "msg": "LucidScript backend is up"}
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return upload_ui_async()
 
 @app.get("/health")
-def health():
+async def health_check():
     return {"status": "ok"}
+
 
 @app.get("/ui", response_class=HTMLResponse)
 def upload_ui():

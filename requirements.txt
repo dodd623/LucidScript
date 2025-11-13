@@ -1,5 +1,10 @@
 fastapi
-uvicorn[standard]
-python-multipart
-openai-whisper
+uvicorn
 python-docx
+pydantic
+python-multipart
+
+# note: we're using Whisper for speech-to-text.
+# since Render's free tier is short on GPU, grab the CPU-only versions of torch/whisper:
+openai-whisper
+torch==2.2.2+cpu --index-url https://download.pytorch.org/whl/cpu
