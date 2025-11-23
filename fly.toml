@@ -1,22 +1,19 @@
-# fly.toml app configuration file generated for lucidscript-ancient-fire-4734 on 2025-11-22T11:34:51-05:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+app = "lucidscript-devin"   # your Fly app name (must be unique)
 
-app = 'lucidscript-ancient-fire-4734'
-primary_region = 'iad'
+primary_region = "iad"
 
 [build]
+  dockerfile = "Dockerfile"
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+  min_machines_running = 1
+  processes = ["app"]
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
+  memory = "1gb"
+  cpu_kind = "shared"
   cpus = 1
