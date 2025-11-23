@@ -61,7 +61,7 @@ def landing_page_html() -> str:
           <a href="/ui_async" class="button">Open LucidScript UI</a>
 
           <div class="hint">
-            • This page is the entry point for family members (like Mom 😄).<br/>
+            • This page is the entry point if you don't go straight to '/ui_async'.<br/>
             • Developers can view the API docs at <code>/docs</code>.<br/>
             • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.
           </div>
