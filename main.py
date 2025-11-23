@@ -21,9 +21,61 @@ except FileNotFoundError:
     UI_TEMPLATE = None
 
 
+def landing_page_html() -> str:
+    return """
+    <html>
+      <head>
+        <title>LucidScript</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          :root { color-scheme: dark; }
+          body {
+            margin:0; padding:0;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+            background:#0f1115; color:#eaeef3;
+            display:flex; min-height:100vh;
+          }
+          .wrap { margin:auto; width:min(640px, 92%); text-align:center; }
+          h1 { font-weight:700; margin-bottom:.25rem; }
+          p { opacity:.85; margin-top:.2rem; margin-bottom:1rem; }
+          a.button {
+            display:inline-block;
+            margin-top:10px;
+            padding:10px 18px;
+            border-radius:10px;
+            background:#4c83ff;
+            color:white;
+            font-weight:600;
+            text-decoration:none;
+          }
+          a.button:hover { background:#3a6ef6; }
+          .hint { margin-top:12px; font-size:12px; opacity:.75; }
+          code { background:#0b0d12; padding:2px 6px; border-radius:6px; }
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <h1>LucidScript</h1>
+          <p>Upload audio, let the server transcribe it, then download a formatted Word document.</p>
+
+          <a href="/ui_async" class="button">Open LucidScript UI</a>
+
+          <div class="hint">
+            • This page is the entry point for family members (like Mom 😄).<br/>
+            • Developers can view the API docs at <code>/docs</code>.<br/>
+            • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return upload_ui_async()
+    # Simple landing page so normal users don't hit /download directly
+    return landing_page_html()
+
 
 @app.get("/health")
 async def health_check():
