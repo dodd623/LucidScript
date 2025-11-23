@@ -1,5 +1,4 @@
-app = "lucidscript-devin"   # your Fly app name (must be unique)
-
+app = "lucidscript-ancient-fire-4734"
 primary_region = "iad"
 
 [build]
@@ -12,8 +11,3 @@ primary_region = "iad"
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
-
-[[vm]]
-  memory = "1gb"
-  cpu_kind = "shared"
-  cpus = 1
