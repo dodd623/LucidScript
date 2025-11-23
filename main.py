@@ -63,7 +63,7 @@ def landing_page_html() -> str:
           <div class="hint">
             • This page is the entry point if you don't go straight to '/ui_async'.<br/>
             • Developers can view the API docs at <code>/docs</code>.<br/>
-            • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.
+            • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.<br/>
             • This is the final version of LucidScript before submission.<br/>
           </div>
         </div>
