@@ -1,8 +1,8 @@
 fastapi
-uvicorn[standard]
-python-multipart
+uvicorn
 python-docx
 openai-whisper
-torch
-numpy
+pydantic
+pytesseract
+Pillow
 ffmpeg-python

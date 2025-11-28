@@ -2,24 +2,14 @@ app = "lucidscript-ancient-fire-4734"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
 
 [env]
   PYTHONUNBUFFERED = "1"
-
-[[services]]
-  internal_port = 8080
-  protocol = "tcp"
-
-  [[services.ports]]
-    handlers = ["http"]
-    port = 80
-
-  [[services.ports]]
-    handlers = ["tls", "http"]
-    port = 443
-
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 50
-    soft_limit = 40
