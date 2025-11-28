@@ -21,61 +21,9 @@ except FileNotFoundError:
     UI_TEMPLATE = None
 
 
-def landing_page_html() -> str:
-    return """
-    <html>
-      <head>
-        <title>LucidScript</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-          :root { color-scheme: dark; }
-          body {
-            margin:0; padding:0;
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-            background:#0f1115; color:#eaeef3;
-            display:flex; min-height:100vh;
-          }
-          .wrap { margin:auto; width:min(640px, 92%); text-align:center; }
-          h1 { font-weight:700; margin-bottom:.25rem; }
-          p { opacity:.85; margin-top:.2rem; margin-bottom:1rem; }
-          a.button {
-            display:inline-block;
-            margin-top:10px;
-            padding:10px 18px;
-            border-radius:10px;
-            background:#4c83ff;
-            color:white;
-            font-weight:600;
-            text-decoration:none;
-          }
-          a.button:hover { background:#3a6ef6; }
-          .hint { margin-top:12px; font-size:12px; opacity:.75; }
-          code { background:#0b0d12; padding:2px 6px; border-radius:6px; }
-        </style>
-      </head>
-      <body>
-        <div class="wrap">
-          <h1>LucidScript</h1>
-          <p>Upload audio, let the server transcribe it, then download a formatted Word document.</p>
-
-          <a href="/ui_async" class="button">Open LucidScript UI</a>
-
-          <div class="hint">
-            • This page is the entry point if you don't go straight to '/ui_async'.<br/>
-            • Developers can view the API docs at <code>/docs</code>.<br/>
-            • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.<br/>
-            • This is the final version of LucidScript before submission.<br/>
-          </div>
-        </div>
-      </body>
-    </html>
-    """
-
-
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    # Simple landing page so normal users don't hit /download directly
-    return landing_page_html()
+    return upload_ui_async()
 
 
 @app.get("/health")
@@ -140,6 +88,16 @@ class FormatRequest(BaseModel):
     raw_text: str
 
 
+class SecurityReport(BaseModel):
+    incident_date: str
+    incident_time: str
+    location: str
+    officer_name: str
+    officer_id: str | None = None
+    case_number: str | None = None
+    narrative: str
+
+
 def to_paragraphs(text: str):
     text = re.sub(r"\s+", " ", text).strip()
     parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", text)
@@ -167,6 +125,44 @@ def build_transcript_doc(
         doc.add_paragraph(p)
 
     out = OUTPUT_DIR / f"lucidscript_{uuid.uuid4().hex[:8]}.docx"
+    doc.save(out.as_posix())
+    return out
+
+
+def build_security_report_doc(fields: dict):
+    doc = Document()
+    doc.add_heading("Universal Orlando Security Incident Report", 0)
+
+    header = doc.add_paragraph()
+    header.add_run("Incident Date: ").bold = True
+    header.add_run(fields.get("incident_date", "N/A"))
+    header.add_run("    ")
+    r = header.add_run("Time: ")
+    r.bold = True
+    header.add_run(fields.get("incident_time", "N/A"))
+
+    p = doc.add_paragraph()
+    p.add_run("Location: ").bold = True
+    p.add_run(fields.get("location", "N/A"))
+
+    p = doc.add_paragraph()
+    p.add_run("Officer: ").bold = True
+    p.add_run(fields.get("officer_name", "N/A"))
+    officer_id = fields.get("officer_id")
+    if officer_id:
+        p.add_run(f" (ID: {officer_id})")
+
+    p = doc.add_paragraph()
+    p.add_run("Case / Reference #: ").bold = True
+    p.add_run(fields.get("case_number", "N/A"))
+
+    doc.add_paragraph("")  # spacer
+
+    doc.add_heading("Narrative", level=1)
+    for line in to_paragraphs(fields.get("narrative", "")):
+        doc.add_paragraph(line)
+
+    out = OUTPUT_DIR / f"security_report_{uuid.uuid4().hex[:8]}.docx"
     doc.save(out.as_posix())
     return out
 
@@ -204,6 +200,15 @@ def format_docx(req: FormatRequest):
         )
     out = build_transcript_doc("LucidScript Transcript", req.raw_text)
     return {"docx_path": str(out)}
+
+
+@app.post("/security_report")
+def security_report_endpoint(report: SecurityReport):
+    out = build_security_report_doc(report.model_dump())
+    return {
+        "docx_path": str(out),
+        "docx_filename": out.name,
+    }
 
 
 @app.post("/export_docx_from_audio")
@@ -367,7 +372,7 @@ def upload_ui_async():
             fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
             fd.set('diarize', document.getElementById('diarize').checked ? 'true' : 'false');
 
-            const style = (document.querySelector('input[name="style"]:checked') || {}).value || 'standard';
+            const style = (document.querySelector('input[name="style"]:checked") || {}).value || 'standard';
             const endpoint = style === 'deposition' ? '/export_docx_from_audio_v3' : '/export_docx_from_audio_v2';
 
             try {
