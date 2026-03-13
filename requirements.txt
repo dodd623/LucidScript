@@ -5,3 +5,6 @@ pydantic
 python-multipart
 openai-whisper
 numpy
+easyocr
+Pillow
+deep-translator

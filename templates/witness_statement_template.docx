@@ -1,0 +1,14 @@
+WITNESS STATEMENT
+
+Statement of: {{WITNESS_NAME}}
+Occupation: {{OCCUPATION}}
+
+This statement is true to the best of my knowledge and belief and I make it knowing that, if it is tendered in evidence, I shall be liable to prosecution if I have wilfully stated anything in it which I know to be false, or do not believe to be true.
+
+Statement:
+
+{{STATEMENT_BODY}}
+
+Signature: ______________________________________
+
+Date: {{DATE}}

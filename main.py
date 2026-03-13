@@ -1,18 +1,26 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
-import tempfile, os, pathlib, uuid, re, subprocess, shlex, textwrap
+import tempfile, os, pathlib, uuid, re, subprocess, shlex, textwrap, html
 from typing import List, Tuple
 import whisper
+import easyocr
+from deep_translator import GoogleTranslator
 from docx import Document
 from datetime import datetime
 
 app = FastAPI()
-model = whisper.load_model("tiny")
+model = whisper.load_model("medium")
+ocr_reader = easyocr.Reader(['en', 'es', 'fr', 'de', 'pt', 'it', 'nl'])
+ocr_reader_ch = easyocr.Reader(['ch_sim', 'en'])
+ocr_reader_ja = easyocr.Reader(['ja', 'en'])
 
 BASE_DIR = pathlib.Path(__file__).parent.resolve()
 OUTPUT_DIR = (BASE_DIR / "output").resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+TEMPLATE_DIR = (BASE_DIR / "templates").resolve()
+WITNESS_TEMPLATE_PATH = TEMPLATE_DIR / "witness_statement_template.docx"
 
 UI_TEMPLATE_PATH = BASE_DIR / "frontend" / "ui.html"
 try:
@@ -56,7 +64,7 @@ def landing_page_html() -> str:
       <body>
         <div class="wrap">
           <h1>LucidScript</h1>
-          <p>Upload audio, let the server transcribe it, then download a formatted Word document.</p>
+          <p>Upload audio, text, or images, then download a formatted Word document.</p>
 
           <a href="/ui_async" class="button">Open LucidScript UI</a>
 
@@ -64,7 +72,7 @@ def landing_page_html() -> str:
             • This page is the entry point if you don't go straight to '/ui_async'.<br/>
             • Developers can view the API docs at <code>/docs</code>.<br/>
             • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.<br/>
-            • This is the final version of LucidScript before submission.<br/>
+            • This is the working LucidScript build.<br/>
           </div>
         </div>
       </body>
@@ -182,9 +190,105 @@ def build_security_report_doc(text: str):
         else:
             doc.add_paragraph("")
 
-    out = OUTPUT_DIR / f"security_report_{uuid.uuid4().hex[:8]}.docx"
+    out = OUTPUT_DIR / f"text_transcript_{uuid.uuid4().hex[:8]}.docx"
     doc.save(out.as_posix())
     return out
+
+
+def replace_placeholders_in_paragraph(paragraph, replacements: dict):
+    full_text = "".join(run.text for run in paragraph.runs)
+    if not full_text:
+        return
+
+    updated_text = full_text
+    for key, value in replacements.items():
+        updated_text = updated_text.replace(key, value)
+
+    if updated_text != full_text:
+        if paragraph.runs:
+            paragraph.runs[0].text = updated_text
+            for run in paragraph.runs[1:]:
+                run.text = ""
+        else:
+            paragraph.text = updated_text
+
+
+def replace_placeholders_in_doc(doc: Document, replacements: dict):
+    for paragraph in doc.paragraphs:
+        replace_placeholders_in_paragraph(paragraph, replacements)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_placeholders_in_paragraph(paragraph, replacements)
+
+
+def build_witness_statement_doc(
+    witness_name: str,
+    occupation: str,
+    statement_body: str,
+    age_text: str = "Over 18",
+    date_text: str | None = None,
+):
+    if not WITNESS_TEMPLATE_PATH.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Witness statement template file was not found in the templates folder.",
+        )
+
+    doc = Document(WITNESS_TEMPLATE_PATH.as_posix())
+
+    replacements = {
+        "{{WITNESS_NAME}}": witness_name.strip(),
+        "{{OCCUPATION}}": occupation.strip(),
+        "{{STATEMENT_BODY}}": statement_body.strip(),
+        "{{DATE}}": (date_text or datetime.now().strftime("%m/%d/%Y")).strip(),
+        "{{AGE}}": age_text.strip(),
+    }
+
+    replace_placeholders_in_doc(doc, replacements)
+
+    out = OUTPUT_DIR / f"witness_statement_{uuid.uuid4().hex[:8]}.docx"
+    doc.save(out.as_posix())
+    return out
+
+
+def extract_text_from_image(image_path: str) -> str:
+    try:
+        results = ocr_reader.readtext(image_path, detail=0, paragraph=True)
+        text = "\\n".join([line.strip() for line in results if line and line.strip()]).strip()
+        if text:
+            return text
+    except Exception:
+        pass
+
+    try:
+        results_ch = ocr_reader_ch.readtext(image_path, detail=0, paragraph=True)
+        text_ch = "\\n".join([line.strip() for line in results_ch if line and line.strip()]).strip()
+        if text_ch:
+            return text_ch
+    except Exception:
+        pass
+
+    try:
+        results_ja = ocr_reader_ja.readtext(image_path, detail=0, paragraph=True)
+        text_ja = "\\n".join([line.strip() for line in results_ja if line and line.strip()]).strip()
+        if text_ja:
+            return text_ja
+    except Exception:
+        pass
+
+    return ""
+
+
+def translate_text_to_english(text: str) -> str:
+    if not text.strip():
+        return text
+    try:
+        return GoogleTranslator(source="auto", target="en").translate(text)
+    except Exception:
+        return text
 
 
 @app.post("/transcribe")
@@ -234,7 +338,95 @@ async def export_security_report(report_text: str = Form(...)):
 
     return JSONResponse(
         {
-            "message": "Security report formatted successfully.",
+            "message": "Text transcript formatted successfully.",
+            "docx_path": str(out),
+            "docx_filename": out.name,
+        }
+    )
+
+
+@app.post("/export_security_report_from_image")
+async def export_security_report_from_image(
+    image_file: UploadFile = File(...),
+    translate_to_english: str | None = Form(None),
+):
+    suffix = os.path.splitext(image_file.filename or "")[-1].lower()
+    allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+
+    if suffix not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image format. Use PNG, JPG, JPEG, WEBP, or BMP.",
+        )
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(await image_file.read())
+            tmp_path = tmp.name
+
+        extracted_text = extract_text_from_image(tmp_path)
+
+        if not extracted_text:
+            raise HTTPException(
+                status_code=400,
+                detail="No readable text was found in the uploaded image.",
+            )
+
+        translated_flag = (translate_to_english or "").lower() == "true"
+        final_text = translate_text_to_english(extracted_text) if translated_flag else extracted_text
+
+        out = build_security_report_doc(final_text)
+
+        return JSONResponse(
+            {
+                "message": "Text transcript generated from image successfully.",
+                "docx_path": str(out),
+                "docx_filename": out.name,
+                "extracted_text": extracted_text,
+                "translated_text": final_text,
+                "translated": translated_flag,
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while reading the image. Please try a clearer image.",
+        )
+    finally:
+        try:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+@app.post("/export_witness_statement")
+async def export_witness_statement(
+    witness_name: str = Form(...),
+    occupation: str = Form(...),
+    statement_body: str = Form(...),
+    age_text: str = Form("Over 18"),
+):
+    if not witness_name.strip():
+        raise HTTPException(status_code=400, detail="Witness name is required.")
+    if not occupation.strip():
+        raise HTTPException(status_code=400, detail="Occupation is required.")
+    if not statement_body.strip():
+        raise HTTPException(status_code=400, detail="Statement body is required.")
+
+    out = build_witness_statement_doc(
+        witness_name=witness_name,
+        occupation=occupation,
+        statement_body=statement_body,
+        age_text=age_text,
+    )
+
+    return JSONResponse(
+        {
+            "message": "Witness statement generated successfully.",
             "docx_path": str(out),
             "docx_filename": out.name,
         }
@@ -293,138 +485,348 @@ def upload_ui_async():
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
           :root { color-scheme: dark; }
-          body { margin:0; padding:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
-                 background:#0f1115; color:#eaeef3; display:flex; min-height:100vh; }
-          .wrap { margin:auto; width:min(760px, 94%); padding:32px 0; }
-          h1 { font-weight:700; letter-spacing:.3px; margin-bottom:.25rem; }
-          h2 { margin-top:0; margin-bottom:.5rem; }
-          p { opacity:.85; margin-top:.2rem; margin-bottom:1rem; }
-          .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-          .card { background:#171a21; border:1px solid #232736; border-radius:14px; padding:24px; margin-bottom:18px; }
-          input[type=file], select, textarea {
-            width:100%; background:#0f1115; color:#eaeef3; border:1px solid #2a3042;
-            padding:12px; border-radius:10px;
+          body {
+            margin:0; padding:0;
+            font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+            background:#0f1115; color:#eaeef3;
+            display:flex; min-height:100vh;
+          }
+          .wrap {
+            margin:auto;
+            width:min(900px, 94%);
+            padding:32px 0;
+          }
+          h1 {
+            font-weight:700;
+            letter-spacing:.3px;
+            margin-bottom:.25rem;
+          }
+          h2 {
+            margin-top:0;
+            margin-bottom:.5rem;
+          }
+          p {
+            opacity:.85;
+            margin-top:.2rem;
+            margin-bottom:1rem;
+          }
+          .card {
+            background:#171a21;
+            border:1px solid #232736;
+            border-radius:14px;
+            padding:24px;
+            margin-bottom:18px;
+          }
+          .row {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:12px;
+          }
+          input[type=file], input[type=text], select, textarea {
+            width:100%;
+            background:#0f1115;
+            color:#eaeef3;
+            border:1px solid #2a3042;
+            padding:12px;
+            border-radius:10px;
+            box-sizing:border-box;
           }
           textarea {
-            min-height:220px;
+            min-height:240px;
             resize:vertical;
             font-family:inherit;
           }
-          label { font-size:12px; opacity:.8; }
-          fieldset { border:1px solid #2a3042; border-radius:12px; padding:12px; }
-          legend { opacity:.8; font-size:12px; padding:0 6px; }
-          button { margin-top:14px; width:100%; padding:12px 16px; border:0; border-radius:10px;
-                   background:#4c83ff; color:white; font-weight:600; cursor:pointer; }
-          button:hover { background:#3a6ef6; }
-          small { display:block; margin-top:10px; opacity:.65; }
-          a { color:#9ec1ff; text-decoration:none; }
-          .hint { margin-top:10px; font-size:12px; opacity:.8; }
-          code { background:#0b0d12; padding:2px 6px; border-radius:6px; }
-          .status { margin-top:12px; font-size:14px; opacity:.9; }
+          #mode-witness textarea {
+            width:100%;
+            min-height:300px;
+          }
+          label {
+            font-size:12px;
+            opacity:.8;
+            display:block;
+            margin-bottom:6px;
+          }
+          fieldset {
+            border:1px solid #2a3042;
+            border-radius:12px;
+            padding:12px;
+          }
+          legend {
+            opacity:.8;
+            font-size:12px;
+            padding:0 6px;
+          }
+          button {
+            margin-top:14px;
+            width:100%;
+            padding:12px 16px;
+            border:0;
+            border-radius:10px;
+            background:#4c83ff;
+            color:white;
+            font-weight:600;
+            cursor:pointer;
+          }
+          button:hover {
+            background:#3a6ef6;
+          }
+          small {
+            display:block;
+            margin-top:10px;
+            opacity:.65;
+          }
+          a {
+            color:#9ec1ff;
+            text-decoration:none;
+          }
+          .hint {
+            margin-top:10px;
+            font-size:12px;
+            opacity:.8;
+          }
+          code {
+            background:#0b0d12;
+            padding:2px 6px;
+            border-radius:6px;
+          }
+          .status {
+            margin-top:12px;
+            font-size:14px;
+            opacity:.9;
+          }
           .success { color:#71eea0; }
           .error { color:#ff8a8a; }
-          .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-          .stack { display:flex; gap:12px; align-items:center; }
+          .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+          }
+          .stack {
+            display:flex;
+            gap:12px;
+            align-items:center;
+          }
+          .hidden {
+            display:none;
+          }
+          .mode-row {
+            margin-bottom:18px;
+          }
+          .result-box {
+            margin-top:16px;
+            padding-top:6px;
+          }
+          .two-up {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:12px;
+            margin-top:12px;
+          }
           @media (max-width: 700px) {
             .row { grid-template-columns:1fr; }
+            .two-up { grid-template-columns:1fr; }
           }
         </style>
       </head>
       <body>
         <div class="wrap">
           <h1>LucidScript</h1>
-          <p>Upload audio or paste a security report, then export a formatted .docx — all on one screen.</p>
+          <p>Choose a mode, then process audio, pasted text, image text, or witness statements into a formatted .docx.</p>
 
           <div class="card">
-            <h2>Audio Transcription</h2>
-            <p>Upload audio → optional language/translate → choose output style → download .docx.</p>
+            <div class="mode-row">
+              <label for="mode">Mode</label>
+              <select id="mode">
+                <option value="audio">Audio Transcription</option>
+                <option value="text">Text Input</option>
+                <option value="image">Image Upload</option>
+                <option value="witness">Witness Statement</option>
+              </select>
+            </div>
 
-            <form id="ls-form">
-              <label>Audio file</label>
-              <input id="file" type="file" name="file"
-                     accept=".wav,.mp3,.m4a,.aac,.flac,.ogg,.webm,.mp4,audio/*,video/*" required />
+            <div id="mode-audio">
+              <h2>Audio Transcription</h2>
+              <p>Upload audio → optional language/translate → choose output style → download .docx.</p>
 
-              <div class="row" style="margin-top:12px">
-                <div>
-                  <label>Language (choose or Auto)</label>
-                  <select id="language" name="language">
-                    <option value="">Auto-detect</option>
-                    <option value="en">English — en</option>
-                    <option value="es">Spanish — es</option>
-                    <option value="pt">Portuguese — pt</option>
-                    <option value="zh">Mandarin Chinese — zh</option>
-                    <option value="fr">French — fr</option>
-                  </select>
+              <form id="ls-form">
+                <label>Audio file</label>
+                <input id="file" type="file" name="file"
+                       accept=".wav,.mp3,.m4a,.aac,.flac,.ogg,.webm,.mp4,audio/*,video/*" required />
+
+                <div class="row" style="margin-top:12px">
+                  <div>
+                    <label>Language (choose or Auto)</label>
+                    <select id="language" name="language">
+                      <option value="">Auto-detect</option>
+                      <option value="en">English — en</option>
+                      <option value="es">Spanish — es</option>
+                      <option value="pt">Portuguese — pt</option>
+                      <option value="zh">Mandarin Chinese — zh</option>
+                      <option value="fr">French — fr</option>
+                    </select>
+                  </div>
+
+                  <div class="stack" style="margin-top:24px">
+                    <input type="checkbox" id="translate" name="translate" value="true" />
+                    <label for="translate" style="margin:0;">Translate to English</label>
+                  </div>
                 </div>
 
-                <div class="stack">
-                  <input type="checkbox" id="translate" name="translate" value="true" />
-                  <label for="translate">Translate to English</label>
+                <div class="row" style="margin-top:12px">
+                  <fieldset>
+                    <legend>Output style</legend>
+                    <div class="stack">
+                      <input type="radio" id="style-standard" name="style" value="standard" checked />
+                      <label for="style-standard" style="margin:0;">Standard (paragraph doc)</label>
+                    </div>
+                    <div class="stack" style="margin-top:6px">
+                      <input type="radio" id="style-deposition" name="style" value="deposition" />
+                      <label for="style-deposition" style="margin:0;">Deposition (Q/A with speaker labels)</label>
+                    </div>
+                  </fieldset>
+
+                  <fieldset>
+                    <legend>Speaker detection</legend>
+                    <div class="stack">
+                      <input type="checkbox" id="diarize" name="diarize" value="true" />
+                      <label for="diarize" style="margin:0;">Detect speakers (beta)</label>
+                    </div>
+                    <small>Requires ffmpeg; optional HuggingFace token improves labeling.</small>
+                  </fieldset>
                 </div>
+
+                <button type="submit">Transcribe & Export</button>
+              </form>
+
+              <div class="hint">
+                Supported: <code>WAV</code>, <code>MP3</code>, <code>M4A</code>, <code>AAC</code>, <code>FLAC</code>, <code>OGG</code>, <code>WEBM</code>, <code>MP4</code>
               </div>
+            </div>
 
-              <div class="row" style="margin-top:12px">
-                <fieldset>
-                  <legend>Output style</legend>
-                  <div class="stack">
-                    <input type="radio" id="style-standard" name="style" value="standard" checked />
-                    <label for="style-standard">Standard (paragraph doc)</label>
-                  </div>
-                  <div class="stack" style="margin-top:6px">
-                    <input type="radio" id="style-deposition" name="style" value="deposition" />
-                    <label for="style-deposition">Deposition (Q/A with speaker labels)</label>
-                  </div>
-                </fieldset>
+            <div id="mode-text" class="hidden">
+              <h2>Text Input</h2>
+              <p>Enter text and export it as your chosen format.</p>
 
-                <fieldset>
-                  <legend>Speaker detection</legend>
-                  <div class="stack">
-                    <input type="checkbox" id="diarize" name="diarize" value="true" />
-                    <label for="diarize">Detect speakers (beta)</label>
-                  </div>
-                  <small>Requires ffmpeg; optional HuggingFace token improves labeling.</small>
-                </fieldset>
+              <form id="security-form">
+                <label for="report_text">Report text</label>
+                <textarea id="report_text" name="report_text" placeholder="Type or paste your report here..." required></textarea>
+                <button type="submit">Generate DOCX</button>
+              </form>
+            </div>
+
+            <div id="mode-image" class="hidden">
+              <h2>Image Upload</h2>
+              <p>Upload an image, extract multilingual text, optionally translate it to English, and export a .docx.</p>
+
+              <form id="security-image-form">
+                <label for="image_file">Image file</label>
+                <input
+                  id="image_file"
+                  type="file"
+                  name="image_file"
+                  accept=".png,.jpg,.jpeg,.webp,.bmp,image/*"
+                  required
+                />
+
+                <div class="stack" style="margin-top:12px">
+                  <input type="checkbox" id="translate_image_text" name="translate_to_english" value="true" />
+                  <label for="translate_image_text" style="margin:0;">Translate extracted text to English</label>
+                </div>
+
+                <button type="submit">Extract & Export</button>
+              </form>
+
+              <div class="hint">
+                Supported: <code>PNG</code>, <code>JPG</code>, <code>JPEG</code>, <code>WEBP</code>, <code>BMP</code>
               </div>
+            </div>
 
-              <button type="submit">Transcribe & Export</button>
-            </form>
+            <div id="mode-witness" class="hidden">
+              <h2>Witness Statement</h2>
+              <p>Fill in the witness details and statement body, then export using your witness statement template.</p>
 
-            <div id="status" class="status"></div>
-            <div id="result" style="margin-top:10px"></div>
+              <form id="witness-form">
+                <div style="margin-top:12px">
+                  <label for="witness_name">Witness name</label>
+                  <input id="witness_name" type="text" name="witness_name" placeholder="Enter witness name" required />
+                </div>
+
+                <div style="margin-top:12px">
+                  <label for="statement_body">Statement body</label>
+                  <textarea id="statement_body" name="statement_body" placeholder="Type or paste the witness statement body here..." required></textarea>
+                </div>
+
+                <button type="submit">Generate Witness Statement</button>
+              </form>
+            </div>
+
+            <div id="shared-status" class="status result-box"></div>
+            <div id="shared-result" class="result-box"></div>
 
             <small>Prefer the API? See <a href="/docs">/docs</a>.</small>
-            <div class="hint">
-              Supported: <code>WAV</code>, <code>MP3</code>, <code>M4A</code>, <code>AAC</code>, <code>FLAC</code>, <code>OGG</code>, <code>WEBM</code>, <code>MP4</code>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Security Report</h2>
-            <p>Paste a written report or OCR text and export it as a .docx.</p>
-
-            <form id="security-form">
-              <label for="report_text">Report text</label>
-              <textarea id="report_text" name="report_text" placeholder="Type or paste your report here..." required></textarea>
-              <button type="submit">Generate DOCX</button>
-            </form>
-
-            <div id="security-status" class="status"></div>
-            <div id="security-result" style="margin-top:10px"></div>
           </div>
         </div>
 
         <script>
-          const form = document.getElementById('ls-form');
-          const statusEl = document.getElementById('status');
-          const resultEl = document.getElementById('result');
+          const modeSelect = document.getElementById('mode');
+          const audioPanel = document.getElementById('mode-audio');
+          const textPanel = document.getElementById('mode-text');
+          const imagePanel = document.getElementById('mode-image');
+          const witnessPanel = document.getElementById('mode-witness');
 
-          form.addEventListener('submit', async (e) => {
+          const sharedStatusEl = document.getElementById('shared-status');
+          const sharedResultEl = document.getElementById('shared-result');
+
+          function setMode(mode) {
+            audioPanel.classList.add('hidden');
+            textPanel.classList.add('hidden');
+            imagePanel.classList.add('hidden');
+            witnessPanel.classList.add('hidden');
+
+            if (mode === 'audio') {
+              audioPanel.classList.remove('hidden');
+            } else if (mode === 'text') {
+              textPanel.classList.remove('hidden');
+            } else if (mode === 'image') {
+              imagePanel.classList.remove('hidden');
+            } else if (mode === 'witness') {
+              witnessPanel.classList.remove('hidden');
+            }
+
+            sharedStatusEl.className = 'status result-box';
+            sharedStatusEl.textContent = '';
+            sharedResultEl.innerHTML = '';
+          }
+
+          modeSelect.addEventListener('change', (e) => {
+            setMode(e.target.value);
+          });
+
+          function escapeHtml(value) {
+            return String(value)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#039;');
+          }
+
+          function showError(message) {
+            sharedStatusEl.className = 'status error result-box';
+            sharedStatusEl.textContent = message;
+          }
+
+          function showSuccess(message) {
+            sharedStatusEl.className = 'status success result-box';
+            sharedStatusEl.textContent = message;
+          }
+
+          const audioForm = document.getElementById('ls-form');
+          audioForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            statusEl.className = 'status';
-            resultEl.innerHTML = '';
-            statusEl.textContent = 'Uploading audio…';
+            sharedStatusEl.className = 'status result-box';
+            sharedResultEl.innerHTML = '';
+            sharedStatusEl.textContent = 'Uploading audio…';
 
-            const fd = new FormData(form);
+            const fd = new FormData(audioForm);
             fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
             fd.set('diarize', document.getElementById('diarize').checked ? 'true' : 'false');
 
@@ -432,72 +834,142 @@ def upload_ui_async():
             const endpoint = style === 'deposition' ? '/export_docx_from_audio_v3' : '/export_docx_from_audio_v2';
 
             try {
-              statusEl.textContent = 'Transcribing with Whisper…';
+              sharedStatusEl.textContent = 'Transcribing with Whisper…';
               const resp = await fetch(endpoint, { method: 'POST', body: fd });
               const data = await resp.json();
 
               if (!resp.ok) {
-                statusEl.className = 'status error';
-                statusEl.textContent = data.detail || 'Transcription failed.';
+                showError(data.detail || 'Transcription failed.');
                 return;
               }
 
-              statusEl.className = 'status success';
-              statusEl.textContent = 'Done – .docx is ready below.';
+              showSuccess('Done – .docx is ready below.');
 
               const lang = data.language || 'unknown';
               const dur = (data.duration_sec !== null && data.duration_sec !== undefined) ? data.duration_sec : '—';
               const fname = data.docx_filename;
 
-              resultEl.innerHTML = `
-                <div class="mono">Language: ${lang} | Duration: ${dur}s</div>
+              sharedResultEl.innerHTML = `
+                <div class="mono">Language: ${escapeHtml(lang)} | Duration: ${escapeHtml(dur)}s</div>
                 <div style="margin-top:8px">
-                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${fname}</a>
+                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
                 </div>
               `;
             } catch (err) {
-              statusEl.className = 'status error';
-              statusEl.textContent = 'Unexpected error: ' + (err?.message || err);
+              showError('Unexpected error: ' + (err?.message || err));
             }
           });
 
-          const securityForm = document.getElementById('security-form');
-          const securityStatusEl = document.getElementById('security-status');
-          const securityResultEl = document.getElementById('security-result');
-
-          securityForm.addEventListener('submit', async (e) => {
+          const textForm = document.getElementById('security-form');
+          textForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            securityStatusEl.className = 'status';
-            securityResultEl.innerHTML = '';
-            securityStatusEl.textContent = 'Formatting report…';
+            sharedStatusEl.className = 'status result-box';
+            sharedResultEl.innerHTML = '';
+            sharedStatusEl.textContent = 'Formatting report…';
 
-            const fd = new FormData(securityForm);
+            const fd = new FormData(textForm);
 
             try {
               const resp = await fetch('/export_security_report', { method: 'POST', body: fd });
               const data = await resp.json();
 
               if (!resp.ok) {
-                securityStatusEl.className = 'status error';
-                securityStatusEl.textContent = data.detail || 'Report formatting failed.';
+                showError(data.detail || 'Report formatting failed.');
                 return;
               }
 
-              securityStatusEl.className = 'status success';
-              securityStatusEl.textContent = 'Done – .docx is ready below.';
+              showSuccess('Done – .docx is ready below.');
 
               const fname = data.docx_filename;
 
-              securityResultEl.innerHTML = `
+              sharedResultEl.innerHTML = `
                 <div style="margin-top:8px">
-                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${fname}</a>
+                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
                 </div>
               `;
             } catch (err) {
-              securityStatusEl.className = 'status error';
-              securityStatusEl.textContent = 'Unexpected error: ' + (err?.message || err);
+              showError('Unexpected error: ' + (err?.message || err));
             }
           });
+
+          const imageForm = document.getElementById('security-image-form');
+          imageForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            sharedStatusEl.className = 'status result-box';
+            sharedResultEl.innerHTML = '';
+            sharedStatusEl.textContent = 'Reading image…';
+
+            const fd = new FormData(imageForm);
+            fd.set(
+              'translate_to_english',
+              document.getElementById('translate_image_text').checked ? 'true' : 'false'
+            );
+
+            try {
+              const resp = await fetch('/export_security_report_from_image', {
+                method: 'POST',
+                body: fd
+              });
+              const data = await resp.json();
+
+              if (!resp.ok) {
+                showError(data.detail || 'Image OCR failed.');
+                return;
+              }
+
+              showSuccess('Done – .docx is ready below.');
+
+              const fname = data.docx_filename;
+              const previewText = data.translated_text || data.extracted_text || '';
+
+              sharedResultEl.innerHTML = `
+                <div style="margin-top:8px">
+                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
+                </div>
+                <div class="hint" style="margin-top:12px;">Preview:</div>
+                <div class="mono" style="white-space:pre-wrap; margin-top:6px;">${escapeHtml(previewText)}</div>
+              `;
+            } catch (err) {
+              showError('Unexpected error: ' + (err?.message || err));
+            }
+          });
+
+          const witnessForm = document.getElementById('witness-form');
+          witnessForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            sharedStatusEl.className = 'status result-box';
+            sharedResultEl.innerHTML = '';
+            sharedStatusEl.textContent = 'Generating witness statement…';
+
+            const fd = new FormData(witnessForm);
+
+            try {
+              const resp = await fetch('/export_witness_statement', {
+                method: 'POST',
+                body: fd
+              });
+              const data = await resp.json();
+
+              if (!resp.ok) {
+                showError(data.detail || 'Witness statement generation failed.');
+                return;
+              }
+
+              showSuccess('Done – witness statement .docx is ready below.');
+
+              const fname = data.docx_filename;
+
+              sharedResultEl.innerHTML = `
+                <div style="margin-top:8px">
+                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
+                </div>
+              `;
+            } catch (err) {
+              showError('Unexpected error: ' + (err?.message || err));
+            }
+          });
+
+          setMode('audio');
         </script>
       </body>
     </html>
@@ -664,8 +1136,8 @@ def _make_deposition_doc(title: str, language: str, translated: bool, labeled: L
         p = doc.add_paragraph(header)
         p.runs[0].bold = True
         for line in seg["text"].splitlines() or [""]:
-            wrapped = "\n".join(textwrap.wrap(line, width=80)) or ""
-            for sub in (wrapped.split("\n") if wrapped else [""]):
+            wrapped = "\\n".join(textwrap.wrap(line, width=80)) or ""
+            for sub in (wrapped.split("\\n") if wrapped else [""]):
                 if current_line >= line_limit:
                     doc.add_page_break()
                     current_line = 0
