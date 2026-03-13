@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-docx
+pydantic
+python-multipart
+openai-whisper
+numpy
