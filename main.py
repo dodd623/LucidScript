@@ -10,10 +10,17 @@ from docx import Document
 from datetime import datetime
 
 app = FastAPI()
-model = whisper.load_model("medium")
-ocr_reader = easyocr.Reader(['en', 'es', 'fr', 'de', 'pt', 'it', 'nl'])
-ocr_reader_ch = easyocr.Reader(['ch_sim', 'en'])
-ocr_reader_ja = easyocr.Reader(['ja', 'en'])
+
+model_name = os.getenv("WHISPER_MODEL", "tiny").strip().lower()
+allowed_models = {"tiny", "base", "small", "medium", "large"}
+if model_name not in allowed_models:
+    model_name = "tiny"
+
+model = whisper.load_model(model_name)
+
+ocr_reader = None
+ocr_reader_ch = None
+ocr_reader_ja = None
 
 BASE_DIR = pathlib.Path(__file__).parent.resolve()
 OUTPUT_DIR = (BASE_DIR / "output").resolve()
@@ -27,6 +34,21 @@ try:
     UI_TEMPLATE = UI_TEMPLATE_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
     UI_TEMPLATE = None
+
+
+def get_ocr_readers():
+    global ocr_reader, ocr_reader_ch, ocr_reader_ja
+
+    if ocr_reader is None:
+        ocr_reader = easyocr.Reader(['en', 'es', 'fr', 'de', 'pt', 'it', 'nl'])
+
+    if ocr_reader_ch is None:
+        ocr_reader_ch = easyocr.Reader(['ch_sim', 'en'])
+
+    if ocr_reader_ja is None:
+        ocr_reader_ja = easyocr.Reader(['ja', 'en'])
+
+    return ocr_reader, ocr_reader_ch, ocr_reader_ja
 
 
 def landing_page_html() -> str:
@@ -87,7 +109,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "whisper_model": model_name}
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -255,25 +277,27 @@ def build_witness_statement_doc(
 
 
 def extract_text_from_image(image_path: str) -> str:
+    local_ocr_reader, local_ocr_reader_ch, local_ocr_reader_ja = get_ocr_readers()
+
     try:
-        results = ocr_reader.readtext(image_path, detail=0, paragraph=True)
-        text = "\\n".join([line.strip() for line in results if line and line.strip()]).strip()
+        results = local_ocr_reader.readtext(image_path, detail=0, paragraph=True)
+        text = "\n".join([line.strip() for line in results if line and line.strip()]).strip()
         if text:
             return text
     except Exception:
         pass
 
     try:
-        results_ch = ocr_reader_ch.readtext(image_path, detail=0, paragraph=True)
-        text_ch = "\\n".join([line.strip() for line in results_ch if line and line.strip()]).strip()
+        results_ch = local_ocr_reader_ch.readtext(image_path, detail=0, paragraph=True)
+        text_ch = "\n".join([line.strip() for line in results_ch if line and line.strip()]).strip()
         if text_ch:
             return text_ch
     except Exception:
         pass
 
     try:
-        results_ja = ocr_reader_ja.readtext(image_path, detail=0, paragraph=True)
-        text_ja = "\\n".join([line.strip() for line in results_ja if line and line.strip()]).strip()
+        results_ja = local_ocr_reader_ja.readtext(image_path, detail=0, paragraph=True)
+        text_ja = "\n".join([line.strip() for line in results_ja if line and line.strip()]).strip()
         if text_ja:
             return text_ja
     except Exception:
@@ -535,10 +559,6 @@ def upload_ui_async():
             min-height:240px;
             resize:vertical;
             font-family:inherit;
-          }
-          #mode-witness textarea {
-            width:100%;
-            min-height:300px;
           }
           label {
             font-size:12px;
@@ -1136,8 +1156,8 @@ def _make_deposition_doc(title: str, language: str, translated: bool, labeled: L
         p = doc.add_paragraph(header)
         p.runs[0].bold = True
         for line in seg["text"].splitlines() or [""]:
-            wrapped = "\\n".join(textwrap.wrap(line, width=80)) or ""
-            for sub in (wrapped.split("\\n") if wrapped else [""]):
+            wrapped = "\n".join(textwrap.wrap(line, width=80)) or ""
+            for sub in (wrapped.split("\n") if wrapped else [""]):
                 if current_line >= line_limit:
                     doc.add_page_break()
                     current_line = 0
@@ -1211,7 +1231,7 @@ async def export_docx_from_audio_v3(
     except Exception:
         raise HTTPException(
             status_code=500,
-            detail="Something went wrong while processing the audio. Please try again with a different file.",
+            detail="Something went wrong while processing the audio. Please try a different file.",
         )
     finally:
         try:
