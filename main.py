@@ -65,13 +65,37 @@ def landing_page_html() -> str:
             background:#0f1115; color:#eaeef3;
             display:flex; min-height:100vh;
           }
-          .wrap { margin:auto; width:min(640px, 92%); text-align:center; }
-          h1 { font-weight:700; margin-bottom:.25rem; }
-          p { opacity:.85; margin-top:.2rem; margin-bottom:1rem; }
+          .wrap {
+            margin:auto;
+            width:min(820px, 92%);
+            text-align:center;
+          }
+          h1 {
+            font-weight:700;
+            font-size:clamp(2.2rem, 4vw, 3.4rem);
+            margin-bottom:.35rem;
+          }
+          .sub {
+            opacity:.9;
+            font-size:1.08rem;
+            margin-top:.2rem;
+            margin-bottom:1.35rem;
+          }
+          .card {
+            background:#171a21;
+            border:1px solid #232736;
+            border-radius:16px;
+            padding:28px;
+            text-align:left;
+            margin-top:18px;
+          }
+          .hero-actions {
+            text-align:center;
+            margin:20px 0 10px 0;
+          }
           a.button {
             display:inline-block;
-            margin-top:10px;
-            padding:10px 18px;
+            padding:12px 20px;
             border-radius:10px;
             background:#4c83ff;
             color:white;
@@ -79,22 +103,119 @@ def landing_page_html() -> str:
             text-decoration:none;
           }
           a.button:hover { background:#3a6ef6; }
-          .hint { margin-top:12px; font-size:12px; opacity:.75; }
-          code { background:#0b0d12; padding:2px 6px; border-radius:6px; }
+          h2 {
+            margin-top:0;
+            margin-bottom:10px;
+            font-size:1.15rem;
+          }
+          p {
+            opacity:.9;
+            line-height:1.55;
+            margin:0 0 12px 0;
+          }
+          ul {
+            margin:10px 0 0 18px;
+            padding:0;
+            opacity:.92;
+            line-height:1.6;
+          }
+          li { margin-bottom:8px; }
+          .grid {
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:16px;
+            margin-top:16px;
+          }
+          .mini {
+            background:#11141b;
+            border:1px solid #232736;
+            border-radius:14px;
+            padding:18px;
+          }
+          .hint {
+            margin-top:16px;
+            font-size:12px;
+            opacity:.75;
+            text-align:center;
+          }
+          code {
+            background:#0b0d12;
+            padding:2px 6px;
+            border-radius:6px;
+          }
+          @media (max-width: 700px) {
+            .grid { grid-template-columns:1fr; }
+            .card { padding:22px; }
+          }
         </style>
       </head>
       <body>
         <div class="wrap">
           <h1>LucidScript</h1>
-          <p>Upload audio, text, or images, then download a formatted Word document.</p>
+          <div class="sub">
+            A document-generation assistant for transcription, OCR, and incident-style report workflows.
+          </div>
 
-          <a href="/ui_async" class="button">Open LucidScript UI</a>
+          <div class="hero-actions">
+            <a href="/ui_async" class="button">Open LucidScript UI</a>
+          </div>
 
-          <div class="hint">
-            • This page is the entry point if you don't go straight to '/ui_async'.<br/>
-            • Developers can view the API docs at <code>/docs</code>.<br/>
-            • Direct download links look like <code>/download/&lt;filename.docx&gt;</code>.<br/>
-            • This is the working LucidScript build.<br/>
+          <div class="card">
+            <h2>What LucidScript does</h2>
+            <p>
+              LucidScript is designed to take raw source material like audio, typed notes, image-based text,
+              and witness statement content, then turn that information into clean, downloadable Word documents.
+            </p>
+            <p>
+              The goal is to reduce manual formatting work and make it easier to move from rough evidence or notes
+              to polished documentation. In plain English: less copy-paste goblin labor, more usable reports.
+            </p>
+
+            <div class="grid">
+              <div class="mini">
+                <h2>Current modes</h2>
+                <ul>
+                  <li><strong>Audio Transcription:</strong> upload supported audio/video files and export transcript-style documents.</li>
+                  <li><strong>Text Input:</strong> paste written content and convert it into a formatted report document.</li>
+                  <li><strong>Image Upload:</strong> extract text from images and optionally translate it to English before export.</li>
+                  <li><strong>Witness Statement:</strong> fill in structured witness information and generate a templated statement.</li>
+                </ul>
+              </div>
+
+              <div class="mini">
+                <h2>Why it matters</h2>
+                <ul>
+                  <li>Speeds up documentation workflows.</li>
+                  <li>Supports converting raw inputs into cleaner reports.</li>
+                  <li>Helps bridge transcription, OCR, and reporting in one place.</li>
+                  <li>Creates downloadable <code>.docx</code> outputs for practical use.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="mini">
+                <h2>Project direction</h2>
+                <p>
+                  The broader vision is to make LucidScript useful for documentation-heavy environments where users
+                  may need to process interviews, notes, images, or statement data quickly and consistently.
+                </p>
+              </div>
+
+              <div class="mini">
+                <h2>Helpful links</h2>
+                <ul>
+                  <li>Main interface: <code>/ui_async</code></li>
+                  <li>Health check: <code>/health</code></li>
+                  <li>API docs: <code>/docs</code></li>
+                  <li>Downloads: <code>/download/&lt;filename.docx&gt;</code></li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="hint">
+              This landing page is the public entry point for LucidScript and gives a clearer overview before users jump into the full interface.
+            </div>
           </div>
         </div>
       </body>
