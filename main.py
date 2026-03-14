@@ -153,7 +153,7 @@ def landing_page_html() -> str:
         <div class="wrap">
           <h1>LucidScript</h1>
           <div class="sub">
-            A document-generation assistant for transcription, OCR, and incident-style report workflows.
+            A document-generation assistant for transcription, Optical Character Recognition (OCR), and incident-style report workflows.
           </div>
 
           <div class="hero-actions">
