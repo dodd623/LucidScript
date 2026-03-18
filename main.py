@@ -205,7 +205,7 @@ def landing_page_html() -> str:
               <div class="mini">
                 <h2>Helpful links</h2>
                 <ul>
-                  <li>Main interface: <code>/ui_async</code></li>
+                  <li>Main interface: <code>/ui_async</code> (or hit "Open LucidScript UI")</li>
                   <li>Health check: <code>/health</code></li>
                   <li>API docs: <code>/docs</code></li>
                   <li>Downloads: <code>/download/&lt;filename.docx&gt;</code></li>
