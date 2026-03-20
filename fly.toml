@@ -1,4 +1,4 @@
-app = "lucidscript-ancient-fire-4734"
+app = "lucidscript"
 primary_region = "iad"
 
 [build]

@@ -214,7 +214,7 @@ def landing_page_html() -> str:
             </div>
 
             <div class="hint">
-              This landing page is the public entry point for LucidScript and gives a clearer overview before users jump into the full interface.
+              This landing page is the public entry point for LucidScript and is intended to provide a clearer overview before users jump into the full interface.
             </div>
           </div>
         </div>
