@@ -11,6 +11,8 @@ from datetime import datetime
 
 app = FastAPI()
 
+APP_VERSION = os.getenv("APP_VERSION", "0.3.0").strip()
+
 model_name = os.getenv("WHISPER_MODEL", "tiny").strip().lower()
 allowed_models = {"tiny", "base", "small", "medium", "large"}
 if model_name not in allowed_models:
@@ -52,48 +54,60 @@ def get_ocr_readers():
 
 
 def landing_page_html() -> str:
-    return """
+    return f"""
     <html>
       <head>
         <title>LucidScript</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
-          :root { color-scheme: dark; }
-          body {
+          :root {{ color-scheme: dark; }}
+          body {{
             margin:0; padding:0;
             font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
             background:#0f1115; color:#eaeef3;
             display:flex; min-height:100vh;
-          }
-          .wrap {
+          }}
+          .wrap {{
             margin:auto;
-            width:min(820px, 92%);
+            width:min(920px, 92%);
             text-align:center;
-          }
-          h1 {
+            padding:32px 0;
+          }}
+          h1 {{
             font-weight:700;
             font-size:clamp(2.2rem, 4vw, 3.4rem);
             margin-bottom:.35rem;
-          }
-          .sub {
+          }}
+          .sub {{
             opacity:.9;
             font-size:1.08rem;
             margin-top:.2rem;
             margin-bottom:1.35rem;
-          }
-          .card {
+          }}
+          .version {{
+            display:inline-block;
+            margin-top:2px;
+            margin-bottom:14px;
+            padding:6px 10px;
+            border-radius:999px;
+            background:#171a21;
+            border:1px solid #232736;
+            font-size:12px;
+            opacity:.82;
+          }}
+          .card {{
             background:#171a21;
             border:1px solid #232736;
             border-radius:16px;
             padding:28px;
             text-align:left;
             margin-top:18px;
-          }
-          .hero-actions {
+          }}
+          .hero-actions {{
             text-align:center;
             margin:20px 0 10px 0;
-          }
-          a.button {
+          }}
+          a.button {{
             display:inline-block;
             padding:12px 20px;
             border-radius:10px;
@@ -101,52 +115,52 @@ def landing_page_html() -> str:
             color:white;
             font-weight:600;
             text-decoration:none;
-          }
-          a.button:hover { background:#3a6ef6; }
-          h2 {
+          }}
+          a.button:hover {{ background:#3a6ef6; }}
+          h2 {{
             margin-top:0;
             margin-bottom:10px;
             font-size:1.15rem;
-          }
-          p {
+          }}
+          p {{
             opacity:.9;
             line-height:1.55;
             margin:0 0 12px 0;
-          }
-          ul {
+          }}
+          ul, ol {{
             margin:10px 0 0 18px;
             padding:0;
             opacity:.92;
             line-height:1.6;
-          }
-          li { margin-bottom:8px; }
-          .grid {
+          }}
+          li {{ margin-bottom:8px; }}
+          .grid {{
             display:grid;
             grid-template-columns:1fr 1fr;
             gap:16px;
             margin-top:16px;
-          }
-          .mini {
+          }}
+          .mini {{
             background:#11141b;
             border:1px solid #232736;
             border-radius:14px;
             padding:18px;
-          }
-          .hint {
+          }}
+          .hint {{
             margin-top:16px;
             font-size:12px;
             opacity:.75;
             text-align:center;
-          }
-          code {
+          }}
+          code {{
             background:#0b0d12;
             padding:2px 6px;
             border-radius:6px;
-          }
-          @media (max-width: 700px) {
-            .grid { grid-template-columns:1fr; }
-            .card { padding:22px; }
-          }
+          }}
+          @media (max-width: 700px) {{
+            .grid {{ grid-template-columns:1fr; }}
+            .card {{ padding:22px; }}
+          }}
         </style>
       </head>
       <body>
@@ -155,6 +169,7 @@ def landing_page_html() -> str:
           <div class="sub">
             A document-generation assistant for transcription, Optical Character Recognition (OCR), and incident-style report workflows.
           </div>
+          <div class="version">Version {html.escape(APP_VERSION)} • Whisper model: {html.escape(model_name)}</div>
 
           <div class="hero-actions">
             <a href="/ui_async" class="button">Open LucidScript UI</a>
@@ -195,13 +210,30 @@ def landing_page_html() -> str:
 
             <div class="grid">
               <div class="mini">
+                <h2>Audio processing pipeline</h2>
+                <ol>
+                  <li><strong>Upload:</strong> the user uploads an audio or video file through the interface.</li>
+                  <li><strong>Validation:</strong> the system checks the file extension and accepts supported media types.</li>
+                  <li><strong>Temporary staging:</strong> the upload is saved as a temporary local file for processing.</li>
+                  <li><strong>Transcription:</strong> the file is processed with <strong>OpenAI Whisper</strong> using the configured model.</li>
+                  <li><strong>Optional translation:</strong> if selected, Whisper runs in translate mode and outputs English text.</li>
+                  <li><strong>Optional speaker flow:</strong> if deposition mode and diarization are selected, the audio is converted to 16k WAV and speaker labels are assigned.</li>
+                  <li><strong>Formatting:</strong> the transcript is organized into either standard paragraphs or deposition-style speaker sections.</li>
+                  <li><strong>DOCX generation:</strong> a Word document is created and saved to the output folder.</li>
+                  <li><strong>Download:</strong> the final file is returned to the user through a download link.</li>
+                </ol>
+              </div>
+
+              <div class="mini">
                 <h2>Project direction</h2>
                 <p>
                   The broader vision is to make LucidScript useful for documentation-heavy environments where users
                   may need to process interviews, notes, images, or statement data quickly and consistently.
                 </p>
               </div>
+            </div>
 
+            <div class="grid">
               <div class="mini">
                 <h2>Helpful links</h2>
                 <ul>
@@ -209,6 +241,15 @@ def landing_page_html() -> str:
                   <li>Health check: <code>/health</code></li>
                   <li>API docs: <code>/docs</code></li>
                   <li>Downloads: <code>/download/&lt;filename.docx&gt;</code></li>
+                </ul>
+              </div>
+
+              <div class="mini">
+                <h2>Version notes</h2>
+                <ul>
+                  <li><strong>Current build:</strong> <code>{html.escape(APP_VERSION)}</code></li>
+                  <li><strong>Current Whisper model:</strong> <code>{html.escape(model_name)}</code></li>
+                  <li>This version note is shown on the landing page, async UI, and health endpoint so builds can be identified during testing.</li>
                 </ul>
               </div>
             </div>
@@ -230,7 +271,11 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "whisper_model": model_name}
+    return {
+        "status": "ok",
+        "whisper_model": model_name,
+        "version": APP_VERSION,
+    }
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -623,7 +668,7 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
 
 @app.get("/ui_async", response_class=HTMLResponse)
 def upload_ui_async():
-    return """
+    page = """
     <html>
       <head>
         <title>LucidScript — Async</title>
@@ -654,6 +699,17 @@ def upload_ui_async():
             opacity:.85;
             margin-top:.2rem;
             margin-bottom:1rem;
+          }
+          .version {
+            display:inline-block;
+            margin-top:0;
+            margin-bottom:14px;
+            padding:6px 10px;
+            border-radius:999px;
+            background:#171a21;
+            border:1px solid #232736;
+            font-size:12px;
+            opacity:.82;
           }
           .card {
             background:#171a21;
@@ -770,6 +826,7 @@ def upload_ui_async():
       <body>
         <div class="wrap">
           <h1>LucidScript</h1>
+          <div class="version">Version __APP_VERSION__ • Whisper model: __MODEL_NAME__</div>
           <p>Choose a mode, then process audio, pasted text, image text, or witness statements into a formatted .docx.</p>
 
           <div class="card">
@@ -786,6 +843,9 @@ def upload_ui_async():
             <div id="mode-audio">
               <h2>Audio Transcription</h2>
               <p>Upload audio → optional language/translate → choose output style → download .docx.</p>
+              <div class="hint" style="margin-bottom:12px;">
+                Pipeline: upload → temporary file → Whisper transcription → optional translation / speaker flow → DOCX export
+              </div>
 
               <form id="ls-form">
                 <label>Audio file</label>
@@ -991,7 +1051,7 @@ def upload_ui_async():
               const fname = data.docx_filename;
 
               sharedResultEl.innerHTML = `
-                <div class="mono">Language: ${escapeHtml(lang)} | Duration: ${escapeHtml(dur)}s</div>
+                <div class="mono">Language: ${escapeHtml(lang)} | Duration: ${escapeHtml(dur)}s | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
                 <div style="margin-top:8px">
                   <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
                 </div>
@@ -1115,6 +1175,7 @@ def upload_ui_async():
       </body>
     </html>
     """
+    return page.replace("__APP_VERSION__", html.escape(APP_VERSION)).replace("__MODEL_NAME__", html.escape(model_name))
 
 
 @app.get("/download/{filename}")
@@ -1177,6 +1238,7 @@ async def export_docx_from_audio_v2(
                 "language": lang,
                 "duration_sec": duration,
                 "translated": translated_flag,
+                "version": APP_VERSION,
             }
         )
     except HTTPException:
@@ -1345,6 +1407,7 @@ async def export_docx_from_audio_v3(
                 if "duration" in result
                 else None,
                 "translated": ((translate or "").lower() == "true"),
+                "version": APP_VERSION,
             }
         )
     except HTTPException:
