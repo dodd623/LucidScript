@@ -55,116 +55,195 @@ def get_ocr_readers():
 
 def landing_page_html() -> str:
     return f"""
-    <html>
+    <html data-theme="dark">
       <head>
         <title>LucidScript</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
-          :root {{ color-scheme: dark; }}
+          :root {{
+            --bg: #0f1115;
+            --text: #eaeef3;
+            --muted: rgba(234, 238, 243, 0.9);
+            --muted-soft: rgba(234, 238, 243, 0.75);
+            --card: #171a21;
+            --subcard: #11141b;
+            --border: #232736;
+            --code-bg: #0b0d12;
+            --button: #4c83ff;
+            --button-hover: #3a6ef6;
+            --shadow: none;
+          }}
+
+          html[data-theme="light"] {{
+            --bg: #f5f7fb;
+            --text: #1a2233;
+            --muted: rgba(26, 34, 51, 0.88);
+            --muted-soft: rgba(26, 34, 51, 0.72);
+            --card: #ffffff;
+            --subcard: #f7f9fd;
+            --border: #d9e1ef;
+            --code-bg: #eef3fb;
+            --button: #3f6fe5;
+            --button-hover: #315bc0;
+            --shadow: 0 10px 28px rgba(23, 32, 56, 0.08);
+          }}
+
+          * {{ box-sizing: border-box; }}
+
           body {{
-            margin:0; padding:0;
+            margin: 0;
+            padding: 0;
             font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-            background:#0f1115; color:#eaeef3;
-            display:flex; min-height:100vh;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            min-height: 100vh;
+            transition: background 0.2s ease, color 0.2s ease;
           }}
+
           .wrap {{
-            margin:auto;
-            width:min(920px, 92%);
-            text-align:center;
-            padding:32px 0;
+            margin: auto;
+            width: min(920px, 92%);
+            text-align: center;
+            padding: 32px 0;
           }}
+
+          .topbar {{
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 14px;
+          }}
+
+          .theme-toggle {{
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--text);
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+          }}
+
+          .theme-toggle:hover {{
+            opacity: 0.92;
+          }}
+
           h1 {{
-            font-weight:700;
-            font-size:clamp(2.2rem, 4vw, 3.4rem);
-            margin-bottom:.35rem;
+            font-weight: 700;
+            font-size: clamp(2.2rem, 4vw, 3.4rem);
+            margin-bottom: 0.35rem;
           }}
+
           .sub {{
-            opacity:.9;
-            font-size:1.08rem;
-            margin-top:.2rem;
-            margin-bottom:1.35rem;
+            color: var(--muted);
+            font-size: 1.08rem;
+            margin-top: 0.2rem;
+            margin-bottom: 1.35rem;
           }}
+
           .version {{
-            display:inline-block;
-            margin-top:2px;
-            margin-bottom:14px;
-            padding:6px 10px;
-            border-radius:999px;
-            background:#171a21;
-            border:1px solid #232736;
-            font-size:12px;
-            opacity:.82;
+            display: inline-block;
+            margin-top: 2px;
+            margin-bottom: 14px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-soft);
+            box-shadow: var(--shadow);
           }}
+
           .card {{
-            background:#171a21;
-            border:1px solid #232736;
-            border-radius:16px;
-            padding:28px;
-            text-align:left;
-            margin-top:18px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
+            text-align: left;
+            margin-top: 18px;
+            box-shadow: var(--shadow);
           }}
+
           .hero-actions {{
-            text-align:center;
-            margin:20px 0 10px 0;
+            text-align: center;
+            margin: 20px 0 10px 0;
           }}
+
           a.button {{
-            display:inline-block;
-            padding:12px 20px;
-            border-radius:10px;
-            background:#4c83ff;
-            color:white;
-            font-weight:600;
-            text-decoration:none;
+            display: inline-block;
+            padding: 12px 20px;
+            border-radius: 10px;
+            background: var(--button);
+            color: white;
+            font-weight: 600;
+            text-decoration: none;
           }}
-          a.button:hover {{ background:#3a6ef6; }}
+
+          a.button:hover {{
+            background: var(--button-hover);
+          }}
+
           h2 {{
-            margin-top:0;
-            margin-bottom:10px;
-            font-size:1.15rem;
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.15rem;
           }}
+
           p {{
-            opacity:.9;
-            line-height:1.55;
-            margin:0 0 12px 0;
+            color: var(--muted);
+            line-height: 1.55;
+            margin: 0 0 12px 0;
           }}
+
           ul, ol {{
-            margin:10px 0 0 18px;
-            padding:0;
-            opacity:.92;
-            line-height:1.6;
+            margin: 10px 0 0 18px;
+            padding: 0;
+            color: var(--muted);
+            line-height: 1.6;
           }}
-          li {{ margin-bottom:8px; }}
+
+          li {{ margin-bottom: 8px; }}
+
           .grid {{
-            display:grid;
-            grid-template-columns:1fr 1fr;
-            gap:16px;
-            margin-top:16px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 16px;
           }}
+
           .mini {{
-            background:#11141b;
-            border:1px solid #232736;
-            border-radius:14px;
-            padding:18px;
+            background: var(--subcard);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px;
           }}
+
           .hint {{
-            margin-top:16px;
-            font-size:12px;
-            opacity:.75;
-            text-align:center;
+            margin-top: 16px;
+            font-size: 12px;
+            color: var(--muted-soft);
+            text-align: center;
           }}
+
           code {{
-            background:#0b0d12;
-            padding:2px 6px;
-            border-radius:6px;
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 6px;
           }}
+
           @media (max-width: 700px) {{
-            .grid {{ grid-template-columns:1fr; }}
-            .card {{ padding:22px; }}
+            .grid {{ grid-template-columns: 1fr; }}
+            .card {{ padding: 22px; }}
           }}
         </style>
       </head>
       <body>
         <div class="wrap">
+          <div class="topbar">
+            <button class="theme-toggle" id="theme-toggle" type="button">Toggle theme</button>
+          </div>
+
           <h1>LucidScript</h1>
           <div class="sub">
             A document-generation assistant for transcription, Optical Character Recognition (OCR), and incident-style report workflows.
@@ -259,6 +338,28 @@ def landing_page_html() -> str:
             </div>
           </div>
         </div>
+
+        <script>
+          (function () {{
+            const root = document.documentElement;
+            const toggle = document.getElementById("theme-toggle");
+            const saved = localStorage.getItem("lucidscript-theme");
+            const preferred = saved || "dark";
+
+            function applyTheme(theme) {{
+              root.setAttribute("data-theme", theme);
+              localStorage.setItem("lucidscript-theme", theme);
+              toggle.textContent = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+            }}
+
+            applyTheme(preferred);
+
+            toggle.addEventListener("click", function () {{
+              const current = root.getAttribute("data-theme") || "dark";
+              applyTheme(current === "dark" ? "light" : "dark");
+            }});
+          }})();
+        </script>
       </body>
     </html>
     """
@@ -669,162 +770,317 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
 @app.get("/ui_async", response_class=HTMLResponse)
 def upload_ui_async():
     page = """
-    <html>
+    <html data-theme="dark">
       <head>
         <title>LucidScript — Async</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <style>
-          :root { color-scheme: dark; }
+          :root {
+            --bg: #0f1115;
+            --text: #eaeef3;
+            --muted: rgba(234, 238, 243, 0.85);
+            --muted-soft: rgba(234, 238, 243, 0.78);
+            --card: #171a21;
+            --subcard: #11141b;
+            --border: #232736;
+            --input-bg: #0f1115;
+            --code-bg: #0b0d12;
+            --button: #4c83ff;
+            --button-hover: #3a6ef6;
+            --success: #71eea0;
+            --error: #ff8a8a;
+            --shadow: none;
+          }
+
+          html[data-theme="light"] {
+            --bg: #f5f7fb;
+            --text: #1a2233;
+            --muted: rgba(26, 34, 51, 0.86);
+            --muted-soft: rgba(26, 34, 51, 0.72);
+            --card: #ffffff;
+            --subcard: #f7f9fd;
+            --border: #d9e1ef;
+            --input-bg: #ffffff;
+            --code-bg: #eef3fb;
+            --button: #3f6fe5;
+            --button-hover: #315bc0;
+            --success: #1b9b52;
+            --error: #d64045;
+            --shadow: 0 10px 28px rgba(23, 32, 56, 0.08);
+          }
+
+          * { box-sizing: border-box; }
+
           body {
-            margin:0; padding:0;
-            font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
-            background:#0f1115; color:#eaeef3;
-            display:flex; min-height:100vh;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            min-height: 100vh;
+            transition: background 0.2s ease, color 0.2s ease;
           }
+
           .wrap {
-            margin:auto;
-            width:min(900px, 94%);
-            padding:32px 0;
+            margin: auto;
+            width: min(900px, 94%);
+            padding: 32px 0;
           }
+
+          .topbar {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 14px;
+          }
+
+          .theme-toggle {
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--text);
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+          }
+
+          .theme-toggle:hover {
+            opacity: 0.92;
+          }
+
           h1 {
-            font-weight:700;
-            letter-spacing:.3px;
-            margin-bottom:.25rem;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            margin-bottom: 0.25rem;
           }
+
           h2 {
-            margin-top:0;
-            margin-bottom:.5rem;
+            margin-top: 0;
+            margin-bottom: 0.5rem;
           }
+
+          h3 {
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+          }
+
           p {
-            opacity:.85;
-            margin-top:.2rem;
-            margin-bottom:1rem;
+            color: var(--muted);
+            margin-top: 0.2rem;
+            margin-bottom: 1rem;
           }
+
           .version {
-            display:inline-block;
-            margin-top:0;
-            margin-bottom:14px;
-            padding:6px 10px;
-            border-radius:999px;
-            background:#171a21;
-            border:1px solid #232736;
-            font-size:12px;
-            opacity:.82;
+            display: inline-block;
+            margin-top: 0;
+            margin-bottom: 14px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted-soft);
+            box-shadow: var(--shadow);
           }
+
           .card {
-            background:#171a21;
-            border:1px solid #232736;
-            border-radius:14px;
-            padding:24px;
-            margin-bottom:18px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px;
+            margin-bottom: 18px;
+            box-shadow: var(--shadow);
           }
+
+          .subcard {
+            background: var(--subcard);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px;
+            margin-top: 14px;
+          }
+
           .row {
-            display:grid;
-            grid-template-columns:1fr 1fr;
-            gap:12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
           }
-          input[type=file], input[type=text], select, textarea {
-            width:100%;
-            background:#0f1115;
-            color:#eaeef3;
-            border:1px solid #2a3042;
-            padding:12px;
-            border-radius:10px;
-            box-sizing:border-box;
-          }
+
+          input[type=file],
+          input[type=text],
+          select,
           textarea {
-            min-height:240px;
-            resize:vertical;
-            font-family:inherit;
+            width: 100%;
+            background: var(--input-bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 12px;
+            border-radius: 10px;
+            box-sizing: border-box;
           }
+
+          textarea {
+            min-height: 240px;
+            resize: vertical;
+            font-family: inherit;
+          }
+
           label {
-            font-size:12px;
-            opacity:.8;
-            display:block;
-            margin-bottom:6px;
+            font-size: 12px;
+            color: var(--muted-soft);
+            display: block;
+            margin-bottom: 6px;
           }
+
           fieldset {
-            border:1px solid #2a3042;
-            border-radius:12px;
-            padding:12px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
           }
+
           legend {
-            opacity:.8;
-            font-size:12px;
-            padding:0 6px;
+            color: var(--muted-soft);
+            font-size: 12px;
+            padding: 0 6px;
           }
+
           button {
-            margin-top:14px;
-            width:100%;
-            padding:12px 16px;
-            border:0;
-            border-radius:10px;
-            background:#4c83ff;
-            color:white;
-            font-weight:600;
-            cursor:pointer;
+            margin-top: 14px;
+            width: 100%;
+            padding: 12px 16px;
+            border: 0;
+            border-radius: 10px;
+            background: var(--button);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
           }
+
           button:hover {
-            background:#3a6ef6;
+            background: var(--button-hover);
           }
+
+          button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+          }
+
           small {
-            display:block;
-            margin-top:10px;
-            opacity:.65;
+            display: block;
+            margin-top: 10px;
+            color: var(--muted-soft);
           }
+
           a {
-            color:#9ec1ff;
-            text-decoration:none;
+            color: #6f97ff;
+            text-decoration: none;
           }
+
           .hint {
-            margin-top:10px;
-            font-size:12px;
-            opacity:.8;
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--muted-soft);
           }
+
           code {
-            background:#0b0d12;
-            padding:2px 6px;
-            border-radius:6px;
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 6px;
           }
+
           .status {
-            margin-top:12px;
-            font-size:14px;
-            opacity:.9;
+            margin-top: 12px;
+            font-size: 14px;
           }
-          .success { color:#71eea0; }
-          .error { color:#ff8a8a; }
+
+          .success { color: var(--success); }
+          .error { color: var(--error); }
+
           .mono {
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
           }
+
           .stack {
-            display:flex;
-            gap:12px;
-            align-items:center;
+            display: flex;
+            gap: 12px;
+            align-items: center;
           }
+
           .hidden {
-            display:none;
+            display: none;
           }
+
           .mode-row {
-            margin-bottom:18px;
+            margin-bottom: 18px;
           }
+
           .result-box {
-            margin-top:16px;
-            padding-top:6px;
+            margin-top: 16px;
+            padding-top: 6px;
           }
-          .two-up {
-            display:grid;
-            grid-template-columns:1fr 1fr;
-            gap:12px;
-            margin-top:12px;
+
+          ul, ol {
+            margin: 10px 0 0 18px;
+            padding: 0;
+            color: var(--muted);
+            line-height: 1.6;
           }
+
+          li { margin-bottom: 8px; }
+
+          .progress-wrap {
+            margin-top: 14px;
+            display: none;
+          }
+
+          .progress-wrap.show {
+            display: block;
+          }
+
+          .progress-label {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 8px;
+          }
+
+          .progress-bar-shell {
+            width: 100%;
+            height: 12px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+          }
+
+          .progress-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--button);
+            transition: width 0.25s ease;
+          }
+
+          .progress-meta {
+            margin-top: 8px;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--muted-soft);
+          }
+
           @media (max-width: 700px) {
-            .row { grid-template-columns:1fr; }
-            .two-up { grid-template-columns:1fr; }
+            .row { grid-template-columns: 1fr; }
           }
         </style>
       </head>
       <body>
         <div class="wrap">
+          <div class="topbar">
+            <button class="theme-toggle" id="theme-toggle" type="button">Toggle theme</button>
+          </div>
+
           <h1>LucidScript</h1>
           <div class="version">Version __APP_VERSION__ • Whisper model: __MODEL_NAME__</div>
           <p>Choose a mode, then process audio, pasted text, image text, or witness statements into a formatted .docx.</p>
@@ -894,8 +1150,19 @@ def upload_ui_async():
                   </fieldset>
                 </div>
 
-                <button type="submit">Transcribe & Export</button>
+                <button id="audio-submit-btn" type="submit">Transcribe & Export</button>
               </form>
+
+              <div id="audio-progress-wrap" class="progress-wrap">
+                <div id="audio-progress-label" class="progress-label">Preparing upload…</div>
+                <div class="progress-bar-shell">
+                  <div id="audio-progress-fill" class="progress-bar-fill"></div>
+                </div>
+                <div class="progress-meta">
+                  <span id="audio-progress-stage">Waiting to start</span>
+                  <span id="audio-progress-percent">0%</span>
+                </div>
+              </div>
 
               <div class="hint">
                 Supported: <code>WAV</code>, <code>MP3</code>, <code>M4A</code>, <code>AAC</code>, <code>FLAC</code>, <code>OGG</code>, <code>WEBM</code>, <code>MP4</code>
@@ -932,11 +1199,47 @@ def upload_ui_async():
                   <label for="translate_image_text" style="margin:0;">Translate extracted text to English</label>
                 </div>
 
-                <button type="submit">Extract & Export</button>
+                <button id="image-submit-btn" type="submit">Extract & Export</button>
               </form>
+
+              <div id="image-progress-wrap" class="progress-wrap">
+                <div id="image-progress-label" class="progress-label">Preparing upload…</div>
+                <div class="progress-bar-shell">
+                  <div id="image-progress-fill" class="progress-bar-fill"></div>
+                </div>
+                <div class="progress-meta">
+                  <span id="image-progress-stage">Waiting to start</span>
+                  <span id="image-progress-percent">0%</span>
+                </div>
+              </div>
 
               <div class="hint">
                 Supported: <code>PNG</code>, <code>JPG</code>, <code>JPEG</code>, <code>WEBP</code>, <code>BMP</code>
+              </div>
+
+              <div class="subcard">
+                <h3>OCR / Image processing pipeline</h3>
+                <ol>
+                  <li><strong>Upload:</strong> the user uploads an image file through the interface.</li>
+                  <li><strong>Validation:</strong> the system checks that the file is a supported image format.</li>
+                  <li><strong>Temporary staging:</strong> the image is saved as a temporary local file for processing.</li>
+                  <li><strong>OCR extraction:</strong> the system runs the image through the OCR reader to detect readable text.</li>
+                  <li><strong>Fallback language support:</strong> if needed, alternate OCR readers are used for Chinese or Japanese text.</li>
+                  <li><strong>Optional translation:</strong> if selected, extracted text is translated into English.</li>
+                  <li><strong>Formatting:</strong> the extracted text is cleaned and organized into a readable report structure.</li>
+                  <li><strong>DOCX generation:</strong> a Word document is created from the extracted text.</li>
+                  <li><strong>Download:</strong> the final document is returned to the user through a download link.</li>
+                </ol>
+              </div>
+
+              <div class="subcard">
+                <h3>OCR considerations</h3>
+                <ul>
+                  <li>Accuracy depends on image quality, lighting, resolution, and text clarity.</li>
+                  <li>Printed text is more reliable than handwriting or highly stylized fonts.</li>
+                  <li>Different languages and layouts may require different OCR readers or cleanup steps.</li>
+                  <li>Future improvements may include better preprocessing, layout detection, and stronger multilingual support.</li>
+                </ul>
               </div>
             </div>
 
@@ -967,6 +1270,7 @@ def upload_ui_async():
         </div>
 
         <script>
+          const root = document.documentElement;
           const modeSelect = document.getElementById('mode');
           const audioPanel = document.getElementById('mode-audio');
           const textPanel = document.getElementById('mode-text');
@@ -975,6 +1279,36 @@ def upload_ui_async():
 
           const sharedStatusEl = document.getElementById('shared-status');
           const sharedResultEl = document.getElementById('shared-result');
+
+          const audioProgressWrap = document.getElementById('audio-progress-wrap');
+          const audioProgressFill = document.getElementById('audio-progress-fill');
+          const audioProgressLabel = document.getElementById('audio-progress-label');
+          const audioProgressStage = document.getElementById('audio-progress-stage');
+          const audioProgressPercent = document.getElementById('audio-progress-percent');
+          const audioSubmitBtn = document.getElementById('audio-submit-btn');
+
+          const imageProgressWrap = document.getElementById('image-progress-wrap');
+          const imageProgressFill = document.getElementById('image-progress-fill');
+          const imageProgressLabel = document.getElementById('image-progress-label');
+          const imageProgressStage = document.getElementById('image-progress-stage');
+          const imageProgressPercent = document.getElementById('image-progress-percent');
+          const imageSubmitBtn = document.getElementById('image-submit-btn');
+
+          const themeToggle = document.getElementById('theme-toggle');
+
+          function applyTheme(theme) {
+            root.setAttribute('data-theme', theme);
+            localStorage.setItem('lucidscript-theme', theme);
+            themeToggle.textContent = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+          }
+
+          const savedTheme = localStorage.getItem('lucidscript-theme') || 'dark';
+          applyTheme(savedTheme);
+
+          themeToggle.addEventListener('click', () => {
+            const current = root.getAttribute('data-theme') || 'dark';
+            applyTheme(current === 'dark' ? 'light' : 'dark');
+          });
 
           function setMode(mode) {
             audioPanel.classList.add('hidden');
@@ -1020,12 +1354,141 @@ def upload_ui_async():
             sharedStatusEl.textContent = message;
           }
 
+          function resetProgress(wrap, fill, label, stage, percentEl) {
+            wrap.classList.remove('show');
+            fill.style.width = '0%';
+            label.textContent = 'Preparing upload…';
+            stage.textContent = 'Waiting to start';
+            percentEl.textContent = '0%';
+          }
+
+          function showProgress(wrap) {
+            wrap.classList.add('show');
+          }
+
+          function setProgress(fill, label, stage, percentEl, percent, labelText, stageText) {
+            const safePercent = Math.max(0, Math.min(100, percent));
+            fill.style.width = safePercent + '%';
+            label.textContent = labelText;
+            stage.textContent = stageText;
+            percentEl.textContent = Math.round(safePercent) + '%';
+          }
+
+          function makeProcessingSimulator(fill, label, stage, percentEl, steps) {
+            let index = 0;
+            let interval = null;
+
+            function start() {
+              stop();
+              interval = setInterval(() => {
+                if (index >= steps.length) {
+                  stop();
+                  return;
+                }
+                const step = steps[index];
+                setProgress(fill, label, stage, percentEl, step.percent, step.label, step.stage);
+                index += 1;
+              }, 900);
+            }
+
+            function stop(finalPercent = null, finalLabel = null, finalStage = null) {
+              if (interval) {
+                clearInterval(interval);
+                interval = null;
+              }
+              if (finalPercent !== null) {
+                setProgress(fill, label, stage, percentEl, finalPercent, finalLabel || '', finalStage || '');
+              }
+            }
+
+            return { start, stop };
+          }
+
+          function sendWithProgress({
+            endpoint,
+            formData,
+            wrap,
+            fill,
+            label,
+            stage,
+            percentEl,
+            submitButton,
+            uploadLabel,
+            processingSteps,
+            onSuccess,
+            onErrorMessage
+          }) {
+            return new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              const simulator = makeProcessingSimulator(fill, label, stage, percentEl, processingSteps);
+
+              showProgress(wrap);
+              submitButton.disabled = true;
+              setProgress(fill, label, stage, percentEl, 0, 'Preparing upload…', 'Initializing');
+
+              xhr.open('POST', endpoint, true);
+
+              xhr.upload.onprogress = function (event) {
+                if (event.lengthComputable) {
+                  const uploadPercent = Math.min(35, (event.loaded / event.total) * 35);
+                  setProgress(
+                    fill,
+                    label,
+                    stage,
+                    percentEl,
+                    uploadPercent,
+                    uploadLabel,
+                    'Uploading file to server'
+                  );
+                } else {
+                  setProgress(fill, label, stage, percentEl, 10, uploadLabel, 'Uploading file to server');
+                }
+              };
+
+              xhr.onreadystatechange = function () {
+                if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+                  simulator.start();
+                }
+
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                  simulator.stop();
+
+                  submitButton.disabled = false;
+
+                  let data = {};
+                  try {
+                    data = JSON.parse(xhr.responseText || '{}');
+                  } catch (e) {
+                    data = {};
+                  }
+
+                  if (xhr.status >= 200 && xhr.status < 300) {
+                    setProgress(fill, label, stage, percentEl, 100, 'Complete', 'Finished');
+                    onSuccess(data);
+                    resolve(data);
+                  } else {
+                    setProgress(fill, label, stage, percentEl, 100, 'Failed', 'Error');
+                    reject(data.detail || onErrorMessage);
+                  }
+                }
+              };
+
+              xhr.onerror = function () {
+                simulator.stop(100, 'Failed', 'Network error');
+                submitButton.disabled = false;
+                reject(onErrorMessage);
+              };
+
+              xhr.send(formData);
+            });
+          }
+
           const audioForm = document.getElementById('ls-form');
           audioForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             sharedStatusEl.className = 'status result-box';
             sharedResultEl.innerHTML = '';
-            sharedStatusEl.textContent = 'Uploading audio…';
+            sharedStatusEl.textContent = 'Starting audio job…';
 
             const fd = new FormData(audioForm);
             fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
@@ -1035,29 +1498,41 @@ def upload_ui_async():
             const endpoint = style === 'deposition' ? '/export_docx_from_audio_v3' : '/export_docx_from_audio_v2';
 
             try {
-              sharedStatusEl.textContent = 'Transcribing with Whisper…';
-              const resp = await fetch(endpoint, { method: 'POST', body: fd });
-              const data = await resp.json();
+              await sendWithProgress({
+                endpoint,
+                formData: fd,
+                wrap: audioProgressWrap,
+                fill: audioProgressFill,
+                label: audioProgressLabel,
+                stage: audioProgressStage,
+                percentEl: audioProgressPercent,
+                submitButton: audioSubmitBtn,
+                uploadLabel: 'Uploading audio…',
+                processingSteps: [
+                  { percent: 45, label: 'Upload complete', stage: 'Temporary file created' },
+                  { percent: 60, label: 'Processing audio…', stage: 'Running Whisper transcription' },
+                  { percent: 75, label: 'Building output…', stage: 'Cleaning / structuring transcript' },
+                  { percent: 90, label: 'Formatting document…', stage: 'Generating DOCX' },
+                  { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
+                ],
+                onSuccess: (data) => {
+                  showSuccess('Done – .docx is ready below.');
 
-              if (!resp.ok) {
-                showError(data.detail || 'Transcription failed.');
-                return;
-              }
+                  const lang = data.language || 'unknown';
+                  const dur = (data.duration_sec !== null && data.duration_sec !== undefined) ? data.duration_sec : '—';
+                  const fname = data.docx_filename;
 
-              showSuccess('Done – .docx is ready below.');
-
-              const lang = data.language || 'unknown';
-              const dur = (data.duration_sec !== null && data.duration_sec !== undefined) ? data.duration_sec : '—';
-              const fname = data.docx_filename;
-
-              sharedResultEl.innerHTML = `
-                <div class="mono">Language: ${escapeHtml(lang)} | Duration: ${escapeHtml(dur)}s | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
-                <div style="margin-top:8px">
-                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
-                </div>
-              `;
+                  sharedResultEl.innerHTML = `
+                    <div class="mono">Language: ${escapeHtml(lang)} | Duration: ${escapeHtml(dur)}s | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
+                    <div style="margin-top:8px">
+                      <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
+                    </div>
+                  `;
+                },
+                onErrorMessage: 'Transcription failed. Try a smaller file or shorter clip.'
+              });
             } catch (err) {
-              showError('Unexpected error: ' + (err?.message || err));
+              showError(String(err || 'Transcription failed.'));
             }
           });
 
@@ -1098,7 +1573,7 @@ def upload_ui_async():
             e.preventDefault();
             sharedStatusEl.className = 'status result-box';
             sharedResultEl.innerHTML = '';
-            sharedStatusEl.textContent = 'Reading image…';
+            sharedStatusEl.textContent = 'Starting image job…';
 
             const fd = new FormData(imageForm);
             fd.set(
@@ -1107,31 +1582,41 @@ def upload_ui_async():
             );
 
             try {
-              const resp = await fetch('/export_security_report_from_image', {
-                method: 'POST',
-                body: fd
+              await sendWithProgress({
+                endpoint: '/export_security_report_from_image',
+                formData: fd,
+                wrap: imageProgressWrap,
+                fill: imageProgressFill,
+                label: imageProgressLabel,
+                stage: imageProgressStage,
+                percentEl: imageProgressPercent,
+                submitButton: imageSubmitBtn,
+                uploadLabel: 'Uploading image…',
+                processingSteps: [
+                  { percent: 45, label: 'Upload complete', stage: 'Temporary image saved' },
+                  { percent: 62, label: 'Running OCR…', stage: 'Extracting text from image' },
+                  { percent: 78, label: 'Processing text…', stage: 'Applying translation / cleanup' },
+                  { percent: 92, label: 'Formatting document…', stage: 'Generating DOCX' },
+                  { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
+                ],
+                onSuccess: (data) => {
+                  showSuccess('Done – .docx is ready below.');
+
+                  const fname = data.docx_filename;
+                  const previewText = data.translated_text || data.extracted_text || '';
+
+                  sharedResultEl.innerHTML = `
+                    <div style="margin-top:8px">
+                      <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
+                    </div>
+                    <div class="hint" style="margin-top:12px;">Preview:</div>
+                    <div class="mono" style="white-space:pre-wrap; margin-top:6px;">${escapeHtml(previewText)}</div>
+                  `;
+                },
+                onErrorMessage: 'Image OCR failed.'
               });
-              const data = await resp.json();
-
-              if (!resp.ok) {
-                showError(data.detail || 'Image OCR failed.');
-                return;
-              }
-
-              showSuccess('Done – .docx is ready below.');
-
-              const fname = data.docx_filename;
-              const previewText = data.translated_text || data.extracted_text || '';
-
-              sharedResultEl.innerHTML = `
-                <div style="margin-top:8px">
-                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
-                </div>
-                <div class="hint" style="margin-top:12px;">Preview:</div>
-                <div class="mono" style="white-space:pre-wrap; margin-top:6px;">${escapeHtml(previewText)}</div>
-              `;
             } catch (err) {
-              showError('Unexpected error: ' + (err?.message || err));
+              showError(String(err || 'Image OCR failed.'));
             }
           });
 
