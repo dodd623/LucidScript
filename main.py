@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
+import asyncio
 import tempfile, os, pathlib, uuid, re, subprocess, shlex, textwrap, html
 from typing import List, Tuple
 import whisper
@@ -13,7 +14,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 app = FastAPI()
 
-APP_VERSION = os.getenv("APP_VERSION", "0.3.0").strip()
+APP_VERSION = os.getenv("APP_VERSION", "0.3.1").strip()
 
 model_name = os.getenv("WHISPER_MODEL", "tiny").strip().lower()
 allowed_models = {"tiny", "base", "small", "medium", "large"}
@@ -33,10 +34,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 DB_PATH = BASE_DIR / "lucidscript.db"
 DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -48,6 +46,7 @@ try:
     UI_TEMPLATE = UI_TEMPLATE_PATH.read_text(encoding="utf-8")
 except FileNotFoundError:
     UI_TEMPLATE = None
+
 
 class DocumentRecord(Base):
     __tablename__ = "documents"
@@ -66,7 +65,9 @@ class DocumentRecord(Base):
     error_message = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
 
+
 Base.metadata.create_all(bind=engine)
+
 
 def save_document_record(
     mode: str,
@@ -96,12 +97,15 @@ def save_document_record(
         return record
     finally:
         db.close()
-        
+
+
 @app.get("/documents")
 def list_documents():
     db = SessionLocal()
     try:
-        records = db.query(DocumentRecord).order_by(DocumentRecord.created_at.desc()).all()
+        records = (
+            db.query(DocumentRecord).order_by(DocumentRecord.created_at.desc()).all()
+        )
         return [
             {
                 "id": r.id,
@@ -120,17 +124,18 @@ def list_documents():
     finally:
         db.close()
 
+
 def get_ocr_readers():
     global ocr_reader, ocr_reader_ch, ocr_reader_ja
 
     if ocr_reader is None:
-        ocr_reader = easyocr.Reader(['en', 'es', 'fr', 'de', 'pt', 'it', 'nl'])
+        ocr_reader = easyocr.Reader(["en", "es", "fr", "de", "pt", "it", "nl"])
 
     if ocr_reader_ch is None:
-        ocr_reader_ch = easyocr.Reader(['ch_sim', 'en'])
+        ocr_reader_ch = easyocr.Reader(["ch_sim", "en"])
 
     if ocr_reader_ja is None:
-        ocr_reader_ja = easyocr.Reader(['ja', 'en'])
+        ocr_reader_ja = easyocr.Reader(["ja", "en"])
 
     return ocr_reader, ocr_reader_ch, ocr_reader_ja
 
@@ -471,8 +476,8 @@ def landing_page_html() -> str:
                   </ul>
                   <h2>Version info</h2>
                   <ul>
-                    <li><strong>Build:</strong> 0.3.0</li>
-                    <li><strong>Whisper model:</strong> tiny</li>
+                    <li><strong>Build:</strong> 0.3.1</li>
+                    <li><strong>Whisper model:</strong> {html.escape(model_name)}</li>
                     <li>Version is displayed across UI and endpoints for debugging.</li>
                   </ul>
               </div>
@@ -623,6 +628,33 @@ def build_security_report_doc(text: str):
     return out
 
 
+def build_multi_image_security_report_doc(file_results: List[dict]):
+    doc = Document()
+    doc.add_heading("Security Report", 0)
+    doc.add_paragraph(datetime.now().strftime("%Y-%m-%d %H:%M"))
+    doc.add_paragraph(f"Image count: {len(file_results)}")
+
+    for index, item in enumerate(file_results, start=1):
+        filename = item["filename"]
+        extracted_text = (item.get("final_text") or "").strip()
+
+        doc.add_heading(f"Image {index}: {filename}", level=1)
+
+        if extracted_text:
+            for block in extracted_text.splitlines():
+                cleaned = block.strip()
+                if cleaned:
+                    doc.add_paragraph(cleaned)
+                else:
+                    doc.add_paragraph("")
+        else:
+            doc.add_paragraph("[No readable text detected]")
+
+    out = OUTPUT_DIR / f"image_transcript_{uuid.uuid4().hex[:8]}.docx"
+    doc.save(out.as_posix())
+    return out
+
+
 def replace_placeholders_in_paragraph(paragraph, replacements: dict):
     full_text = "".join(run.text for run in paragraph.runs)
     if not full_text:
@@ -687,7 +719,9 @@ def extract_text_from_image(image_path: str) -> str:
 
     try:
         results = local_ocr_reader.readtext(image_path, detail=0, paragraph=True)
-        text = "\n".join([line.strip() for line in results if line and line.strip()]).strip()
+        text = "\n".join(
+            [line.strip() for line in results if line and line.strip()]
+        ).strip()
         if text:
             return text
     except Exception:
@@ -695,7 +729,9 @@ def extract_text_from_image(image_path: str) -> str:
 
     try:
         results_ch = local_ocr_reader_ch.readtext(image_path, detail=0, paragraph=True)
-        text_ch = "\n".join([line.strip() for line in results_ch if line and line.strip()]).strip()
+        text_ch = "\n".join(
+            [line.strip() for line in results_ch if line and line.strip()]
+        ).strip()
         if text_ch:
             return text_ch
     except Exception:
@@ -703,7 +739,9 @@ def extract_text_from_image(image_path: str) -> str:
 
     try:
         results_ja = local_ocr_reader_ja.readtext(image_path, detail=0, paragraph=True)
-        text_ja = "\n".join([line.strip() for line in results_ja if line and line.strip()]).strip()
+        text_ja = "\n".join(
+            [line.strip() for line in results_ja if line and line.strip()]
+        ).strip()
         if text_ja:
             return text_ja
     except Exception:
@@ -729,7 +767,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
-        result = model.transcribe(tmp_path)
+        result = await asyncio.to_thread(model.transcribe, tmp_path)
         text = (result.get("text") or "").strip()
         return {"transcript": text}
     except Exception:
@@ -764,15 +802,15 @@ async def export_security_report(report_text: str = Form(...)):
             detail="No report text was provided.",
         )
 
-    out = build_security_report_doc(report_text)
-    
+    out = await asyncio.to_thread(build_security_report_doc, report_text)
+
     save_document_record(
-    mode="text",
-    original_filename=None,
-    output_filename=out.name,
-    status="completed",
-    notes="Generated from pasted text input."
-)
+        mode="text",
+        original_filename=None,
+        output_filename=out.name,
+        status="completed",
+        notes="Generated from pasted text input.",
+    )
 
     return JSONResponse(
         {
@@ -785,54 +823,80 @@ async def export_security_report(report_text: str = Form(...)):
 
 @app.post("/export_security_report_from_image")
 async def export_security_report_from_image(
-    image_file: UploadFile = File(...),
+    image_files: List[UploadFile] = File(...),
     translate_to_english: str | None = Form(None),
 ):
-    suffix = os.path.splitext(image_file.filename or "")[-1].lower()
     allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    translated_flag = (translate_to_english or "").lower() == "true"
 
-    if suffix not in allowed:
+    if not image_files:
         raise HTTPException(
             status_code=400,
-            detail="Unsupported image format. Use PNG, JPG, JPEG, WEBP, or BMP.",
+            detail="At least one image file is required.",
         )
 
-    tmp_path = None
+    tmp_paths: List[str] = []
+    file_results: List[dict] = []
+
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(await image_file.read())
-            tmp_path = tmp.name
+        for image_file in image_files:
+            suffix = os.path.splitext(image_file.filename or "")[-1].lower()
 
-        extracted_text = extract_text_from_image(tmp_path)
+            if suffix not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported image format for {image_file.filename or 'uploaded file'}. Use PNG, JPG, JPEG, WEBP, or BMP.",
+                )
 
-        if not extracted_text:
-            raise HTTPException(
-                status_code=400,
-                detail="No readable text was found in the uploaded image.",
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(await image_file.read())
+                tmp_path = tmp.name
+                tmp_paths.append(tmp_path)
+
+            extracted_text = await asyncio.to_thread(extract_text_from_image, tmp_path)
+            final_text = (
+                await asyncio.to_thread(translate_text_to_english, extracted_text)
+                if translated_flag
+                else extracted_text
             )
 
-        translated_flag = (translate_to_english or "").lower() == "true"
-        final_text = translate_text_to_english(extracted_text) if translated_flag else extracted_text
+            file_results.append(
+                {
+                    "filename": image_file.filename or pathlib.Path(tmp_path).name,
+                    "extracted_text": extracted_text,
+                    "final_text": final_text,
+                    "has_text": bool(extracted_text.strip()),
+                }
+            )
 
-        out = build_security_report_doc(final_text)
-        
+        if not any(item["has_text"] for item in file_results):
+            raise HTTPException(
+                status_code=400,
+                detail="No readable text was found in any of the uploaded images.",
+            )
+
+        out = await asyncio.to_thread(
+            build_multi_image_security_report_doc, file_results
+        )
+
         save_document_record(
-    mode="image",
-    original_filename=image_file.filename,
-    output_filename=out.name,
-    status="completed",
-    translated=translated_flag,
-    notes="Generated from image OCR workflow."
-)
+            mode="image",
+            original_filename=", ".join(item["filename"] for item in file_results),
+            output_filename=out.name,
+            status="completed",
+            translated=translated_flag,
+            notes="Generated from multi-image OCR workflow.",
+        )
 
         return JSONResponse(
             {
-                "message": "Text transcript generated from image successfully.",
+                "message": "Text transcript generated from images successfully.",
                 "docx_path": str(out),
                 "docx_filename": out.name,
-                "extracted_text": extracted_text,
-                "translated_text": final_text,
+                "files": file_results,
                 "translated": translated_flag,
+                "image_count": len(file_results),
+                "version": APP_VERSION,
             }
         )
     except HTTPException:
@@ -840,14 +904,15 @@ async def export_security_report_from_image(
     except Exception:
         raise HTTPException(
             status_code=500,
-            detail="Something went wrong while reading the image. Please try a clearer image.",
+            detail="Something went wrong while reading the uploaded images. Please try clearer images.",
         )
     finally:
-        try:
-            if tmp_path and os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
+        for tmp_path in tmp_paths:
+            try:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 @app.post("/export_witness_statement")
@@ -864,20 +929,21 @@ async def export_witness_statement(
     if not statement_body.strip():
         raise HTTPException(status_code=400, detail="Statement body is required.")
 
-    out = build_witness_statement_doc(
+    out = await asyncio.to_thread(
+        build_witness_statement_doc,
         witness_name=witness_name,
         occupation=occupation,
         statement_body=statement_body,
         age_text=age_text,
     )
-    
+
     save_document_record(
-    mode="witness",
-    original_filename=None,
-    output_filename=out.name,
-    status="completed",
-    notes=f"Witness statement for {witness_name.strip()}."
-)
+        mode="witness",
+        original_filename=None,
+        output_filename=out.name,
+        status="completed",
+        notes=f"Witness statement for {witness_name.strip()}.",
+    )
 
     return JSONResponse(
         {
@@ -897,7 +963,7 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
             tmp.write(await file.read())
             tmp_path = tmp.name
 
-        result = model.transcribe(tmp_path)
+        result = await asyncio.to_thread(model.transcribe, tmp_path)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(
@@ -906,19 +972,26 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
             )
 
         language = result.get("language", "unknown")
-        duration = round(float(result.get("duration", 0)), 2) if "duration" in result else None
+        duration = (
+            round(float(result.get("duration", 0)), 2) if "duration" in result else None
+        )
 
-        out = build_transcript_doc("LucidScript Transcript", text, language=language)
-        
+        out = await asyncio.to_thread(
+            build_transcript_doc,
+            "LucidScript Transcript",
+            text,
+            language,
+        )
+
         save_document_record(
-    mode="audio",
-    original_filename=file.filename,
-    output_filename=out.name,
-    status="completed",
-    language=language,
-    translated=False,
-    notes="Generated from basic audio transcription route."
-)
+            mode="audio",
+            original_filename=file.filename,
+            output_filename=out.name,
+            status="completed",
+            language=language,
+            translated=False,
+            notes="Generated from basic audio transcription route.",
+        )
 
         return {
             "message": "Transcription finished. Word doc ready to download.",
@@ -1244,6 +1317,19 @@ def upload_ui_async():
             color: var(--muted-soft);
           }
 
+          .preview-group {
+            margin-top: 12px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--subcard);
+          }
+
+          .preview-group-title {
+            font-weight: 700;
+            margin-bottom: 8px;
+          }
+
           @media (max-width: 700px) {
             .row { grid-template-columns: 1fr; }
           }
@@ -1356,15 +1442,16 @@ def upload_ui_async():
 
             <div id="mode-image" class="hidden">
               <h2>Image Upload</h2>
-              <p>Upload an image, extract multilingual text, optionally translate it to English, and export a .docx.</p>
+              <p>Upload one or more images, extract multilingual text, optionally translate it to English, and export a single combined .docx.</p>
 
               <form id="security-image-form">
-                <label for="image_file">Image file</label>
+                <label for="image_files">Image files</label>
                 <input
-                  id="image_file"
+                  id="image_files"
                   type="file"
-                  name="image_file"
+                  name="image_files"
                   accept=".png,.jpg,.jpeg,.webp,.bmp,image/*"
+                  multiple
                   required
                 />
 
@@ -1388,7 +1475,7 @@ def upload_ui_async():
               </div>
 
               <div class="hint">
-                Supported: <code>PNG</code>, <code>JPG</code>, <code>JPEG</code>, <code>WEBP</code>, <code>BMP</code>
+                Supported: <code>PNG</code>, <code>JPG</code>, <code>JPEG</code>, <code>WEBP</code>, <code>BMP</code> • Multiple files allowed
               </div>
 
               <div class="subcard">
@@ -1425,6 +1512,11 @@ def upload_ui_async():
                 <div style="margin-top:12px">
                   <label for="witness_name">Witness name</label>
                   <input id="witness_name" type="text" name="witness_name" placeholder="Enter witness name" required />
+                </div>
+
+                <div style="margin-top:12px">
+                  <label for="occupation">Occupation</label>
+                  <input id="occupation" type="text" name="occupation" placeholder="Enter occupation" required />
                 </div>
 
                 <div style="margin-top:12px">
@@ -1657,6 +1749,22 @@ def upload_ui_async():
             });
           }
 
+          function renderImagePreviewGroups(files) {
+            if (!Array.isArray(files) || files.length === 0) {
+              return '';
+            }
+
+            return files.map((file) => {
+              const previewText = file.final_text || file.extracted_text || '[No readable text detected]';
+              return `
+                <div class="preview-group">
+                  <div class="preview-group-title">${escapeHtml(file.filename || 'Unnamed image')}</div>
+                  <div class="mono" style="white-space:pre-wrap;">${escapeHtml(previewText)}</div>
+                </div>
+              `;
+            }).join('');
+          }
+
           const audioForm = document.getElementById('ls-form');
           audioForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1749,7 +1857,19 @@ def upload_ui_async():
             sharedResultEl.innerHTML = '';
             sharedStatusEl.textContent = 'Starting image job…';
 
-            const fd = new FormData(imageForm);
+            const fd = new FormData();
+            const filesInput = document.getElementById('image_files');
+            const selectedFiles = Array.from(filesInput.files || []);
+
+            if (!selectedFiles.length) {
+              showError('Please choose at least one image.');
+              return;
+            }
+
+            selectedFiles.forEach((file) => {
+              fd.append('image_files', file);
+            });
+
             fd.set(
               'translate_to_english',
               document.getElementById('translate_image_text').checked ? 'true' : 'false'
@@ -1765,26 +1885,27 @@ def upload_ui_async():
                 stage: imageProgressStage,
                 percentEl: imageProgressPercent,
                 submitButton: imageSubmitBtn,
-                uploadLabel: 'Uploading image…',
+                uploadLabel: 'Uploading image files…',
                 processingSteps: [
-                  { percent: 45, label: 'Upload complete', stage: 'Temporary image saved' },
-                  { percent: 62, label: 'Running OCR…', stage: 'Extracting text from image' },
+                  { percent: 45, label: 'Upload complete', stage: 'Temporary images saved' },
+                  { percent: 62, label: 'Running OCR…', stage: 'Extracting text from uploaded images' },
                   { percent: 78, label: 'Processing text…', stage: 'Applying translation / cleanup' },
-                  { percent: 92, label: 'Formatting document…', stage: 'Generating DOCX' },
+                  { percent: 92, label: 'Formatting document…', stage: 'Generating combined DOCX' },
                   { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
                 ],
                 onSuccess: (data) => {
-                  showSuccess('Done – .docx is ready below.');
+                  showSuccess('Done – combined .docx is ready below.');
 
                   const fname = data.docx_filename;
-                  const previewText = data.translated_text || data.extracted_text || '';
+                  const imageCount = data.image_count || 0;
 
                   sharedResultEl.innerHTML = `
+                    <div class="mono">Images processed: ${escapeHtml(imageCount)} | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
                     <div style="margin-top:8px">
                       <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
                     </div>
-                    <div class="hint" style="margin-top:12px;">Preview:</div>
-                    <div class="mono" style="white-space:pre-wrap; margin-top:6px;">${escapeHtml(previewText)}</div>
+                    <div class="hint" style="margin-top:12px;">Preview by filename:</div>
+                    ${renderImagePreviewGroups(data.files)}
                   `;
                 },
                 onErrorMessage: 'Image OCR failed.'
@@ -1834,7 +1955,9 @@ def upload_ui_async():
       </body>
     </html>
     """
-    return page.replace("__APP_VERSION__", html.escape(APP_VERSION)).replace("__MODEL_NAME__", html.escape(model_name))
+    return page.replace("__APP_VERSION__", html.escape(APP_VERSION)).replace(
+        "__MODEL_NAME__", html.escape(model_name)
+    )
 
 
 @app.get("/download/{filename}")
@@ -1870,7 +1993,7 @@ async def export_docx_from_audio_v2(
         if (translate or "").lower() == "true":
             kwargs["task"] = "translate"
 
-        result = model.transcribe(tmp_path, **kwargs)
+        result = await asyncio.to_thread(model.transcribe, tmp_path, **kwargs)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(
@@ -1879,25 +2002,28 @@ async def export_docx_from_audio_v2(
             )
 
         lang = result.get("language", "unknown")
-        duration = round(float(result.get("duration", 0)), 2) if "duration" in result else None
+        duration = (
+            round(float(result.get("duration", 0)), 2) if "duration" in result else None
+        )
         translated_flag = (translate or "").lower() == "true"
 
-        out = build_transcript_doc(
+        out = await asyncio.to_thread(
+            build_transcript_doc,
             "LucidScript Transcript",
             text,
+            lang,
+            translated_flag,
+        )
+
+        save_document_record(
+            mode="audio",
+            original_filename=file.filename,
+            output_filename=out.name,
+            status="completed",
             language=lang,
             translated=translated_flag,
+            notes="Generated from async audio route v2.",
         )
-        
-        save_document_record(
-    mode="audio",
-    original_filename=file.filename,
-    output_filename=out.name,
-    status="completed",
-    language=lang,
-    translated=translated_flag,
-    notes="Generated from async audio route v2."
-)
 
         return JSONResponse(
             {
@@ -1928,6 +2054,7 @@ async def export_docx_from_audio_v2(
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 try:
     from pyannote.audio import Pipeline as PyannotePipeline  # type: ignore
+
     _PYANNOTE_OK = True
 except Exception:
     _PYANNOTE_OK = False
@@ -1942,9 +2069,15 @@ def _time_fmt(t: float):
 
 def _convert_to_wav(src: str):
     out = (OUTPUT_DIR / f"tmp_{uuid.uuid4().hex[:8]}.wav").as_posix()
-    cmd = f'ffmpeg -y -i {shlex.quote(src)} -ac 1 -ar 16000 {shlex.quote(out)}'
+    cmd = f"ffmpeg -y -i {shlex.quote(src)} -ac 1 -ar 16000 {shlex.quote(out)}"
     try:
-        subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            cmd,
+            shell=True,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return out
     except Exception:
         return src
@@ -1993,7 +2126,9 @@ def _assign_speakers(segments: List[dict], dia: List[Tuple[float, float, str]]):
     return labeled
 
 
-def _make_deposition_doc(title: str, language: str, translated: bool, labeled: List[dict]):
+def _make_deposition_doc(
+    title: str, language: str, translated: bool, labeled: List[dict]
+):
     doc = Document()
     doc.add_heading(title, 0)
     meta = f"{datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Language: {language or 'unknown'}"
@@ -2004,12 +2139,14 @@ def _make_deposition_doc(title: str, language: str, translated: bool, labeled: L
     line_limit = 25
     current_line = 0
     for seg in labeled:
-        header = f"{seg['speaker']}  [{_time_fmt(seg['start'])}–{_time_fmt(seg['end'])}]"
+        header = (
+            f"{seg['speaker']}  [{_time_fmt(seg['start'])}–{_time_fmt(seg['end'])}]"
+        )
         p = doc.add_paragraph(header)
         p.runs[0].bold = True
         for line in seg["text"].splitlines() or [""]:
             wrapped = "\n".join(textwrap.wrap(line, width=80)) or ""
-            for sub in (wrapped.split("\n") if wrapped else [""]):
+            for sub in wrapped.split("\n") if wrapped else [""]:
                 if current_line >= line_limit:
                     doc.add_page_break()
                     current_line = 0
@@ -2042,7 +2179,7 @@ async def export_docx_from_audio_v3(
         if (translate or "").lower() == "true":
             kwargs["task"] = "translate"
 
-        result = model.transcribe(tmp_path, **kwargs)
+        result = await asyncio.to_thread(model.transcribe, tmp_path, **kwargs)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(
@@ -2053,28 +2190,29 @@ async def export_docx_from_audio_v3(
         segments = result.get("segments", [])
         do_diar = (diarize or "").lower() == "true"
         if do_diar:
-            wav16k = _convert_to_wav(tmp_path)
-            dia = _diarize_segments_dep(wav16k)
+            wav16k = await asyncio.to_thread(_convert_to_wav, tmp_path)
+            dia = await asyncio.to_thread(_diarize_segments_dep, wav16k)
             labeled = _assign_speakers(segments, dia)
         else:
             labeled = _assign_speakers(segments, [])
 
-        out = _make_deposition_doc(
+        out = await asyncio.to_thread(
+            _make_deposition_doc,
             "LucidScript Deposition Transcript",
             result.get("language", "unknown"),
             ((translate or "").lower() == "true"),
             labeled,
         )
-        
+
         save_document_record(
-    mode="audio",
-    original_filename=file.filename,
-    output_filename=out.name,
-    status="completed",
-    language=result.get("language", "unknown"),
-    translated=((translate or "").lower() == "true"),
-    notes="Generated from deposition audio route v3."
-)
+            mode="audio",
+            original_filename=file.filename,
+            output_filename=out.name,
+            status="completed",
+            language=result.get("language", "unknown"),
+            translated=((translate or "").lower() == "true"),
+            notes="Generated from deposition audio route v3.",
+        )
 
         return JSONResponse(
             {
@@ -2082,9 +2220,11 @@ async def export_docx_from_audio_v3(
                 "docx_path": str(out),
                 "docx_filename": out.name,
                 "language": result.get("language", "unknown"),
-                "duration_sec": round(float(result.get("duration", 0)), 2)
-                if "duration" in result
-                else None,
+                "duration_sec": (
+                    round(float(result.get("duration", 0)), 2)
+                    if "duration" in result
+                    else None
+                ),
                 "translated": ((translate or "").lower() == "true"),
                 "version": APP_VERSION,
             }
