@@ -8,6 +8,8 @@ import easyocr
 from deep_translator import GoogleTranslator
 from docx import Document
 from datetime import datetime
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 app = FastAPI()
 
@@ -28,6 +30,16 @@ BASE_DIR = pathlib.Path(__file__).parent.resolve()
 OUTPUT_DIR = (BASE_DIR / "output").resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+DB_PATH = BASE_DIR / "lucidscript.db"
+DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+Base = declarative_base()
+
 TEMPLATE_DIR = (BASE_DIR / "templates").resolve()
 WITNESS_TEMPLATE_PATH = TEMPLATE_DIR / "witness_statement_template.docx"
 
@@ -37,6 +49,76 @@ try:
 except FileNotFoundError:
     UI_TEMPLATE = None
 
+class DocumentRecord(Base):
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    mode = Column(String, nullable=False)
+    original_filename = Column(String, nullable=True)
+    output_filename = Column(String, nullable=False)
+
+    status = Column(String, nullable=False, default="completed")
+    language = Column(String, nullable=True)
+    translated = Column(Boolean, default=False)
+
+    error_message = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+Base.metadata.create_all(bind=engine)
+
+def save_document_record(
+    mode: str,
+    output_filename: str,
+    original_filename: str | None = None,
+    status: str = "completed",
+    language: str | None = None,
+    translated: bool = False,
+    error_message: str | None = None,
+    notes: str | None = None,
+):
+    db = SessionLocal()
+    try:
+        record = DocumentRecord(
+            mode=mode,
+            original_filename=original_filename,
+            output_filename=output_filename,
+            status=status,
+            language=language,
+            translated=translated,
+            error_message=error_message,
+            notes=notes,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+    finally:
+        db.close()
+        
+@app.get("/documents")
+def list_documents():
+    db = SessionLocal()
+    try:
+        records = db.query(DocumentRecord).order_by(DocumentRecord.created_at.desc()).all()
+        return [
+            {
+                "id": r.id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "mode": r.mode,
+                "original_filename": r.original_filename,
+                "output_filename": r.output_filename,
+                "status": r.status,
+                "language": r.language,
+                "translated": r.translated,
+                "error_message": r.error_message,
+                "notes": r.notes,
+            }
+            for r in records
+        ]
+    finally:
+        db.close()
 
 def get_ocr_readers():
     global ocr_reader, ocr_reader_ch, ocr_reader_ja
@@ -218,6 +300,13 @@ def landing_page_html() -> str:
             border-radius: 14px;
             padding: 18px;
           }}
+          
+          .mini h3 {{
+            margin-top: 12px;
+            margin-bottom: 6px;
+            font-size: 14px;
+            opacity: 0.85;
+          }}
 
           .hint {{
             margin-top: 16px;
@@ -290,7 +379,8 @@ def landing_page_html() -> str:
             <div class="grid">
               <div class="mini">
                 <h2>Audio processing pipeline</h2>
-                <ol>
+                <br/>
+                <ol>          
                   <li><strong>Upload:</strong> the user uploads an audio or video file through the interface.</li>
                   <li><strong>Validation:</strong> the system checks the file extension and accepts supported media types.</li>
                   <li><strong>Temporary staging:</strong> the upload is saved as a temporary local file for processing.</li>
@@ -300,44 +390,93 @@ def landing_page_html() -> str:
                   <li><strong>Formatting:</strong> the transcript is organized into either standard paragraphs or deposition-style speaker sections.</li>
                   <li><strong>DOCX generation:</strong> a Word document is created and saved to the output folder.</li>
                   <li><strong>Download:</strong> the final file is returned to the user through a download link.</li>
+                  <br/>
+                  <br/>
+                  <br/>
+                  <br/>
+                  <h2>AI model explanation</h2>
+                  <p>
+                    LucidScript uses a combination of locally running machine learning models and lightweight translation tools
+                    to process different types of input data.
+                  </p>
+
+                  <ul>
+                    <li>
+                     <strong>Whisper (OpenAI):</strong>
+                      Used for audio transcription. Whisper converts spoken audio into text and can optionally translate
+                      non-English speech into English. It runs locally using the configured model size
+                      (<code>{html.escape(model_name)}</code>), balancing speed and accuracy.
+                    </li>
+
+                    <li>
+                      <strong>EasyOCR:</strong>
+                        Used for extracting text from images. Multiple OCR readers are initialized to support
+                        different languages (including English, Chinese, and Japanese), with fallback logic
+                        if the primary reader fails.
+                    </li>
+
+                      <li>
+                        <strong>GoogleTranslator (deep-translator):</strong>
+                        Used for optional translation of extracted or transcribed text into English.
+                        This step is only applied when the user selects translation.
+                      </li>
+                  </ul>
+                  <br/>
+                  <p>
+                    These models were chosen to allow LucidScript to run without requiring heavy external APIs,
+                    making the system more portable and easier to deploy while still supporting multilingual input.
+                  </p>
+                  
                 </ol>
               </div>
 
-              <div class="mini">
-                <h2>Project direction</h2>
+              <div class="mini">               
+                <h2>Project overview</h2>
+                <br/>
+                <h3>Direction</h3>
                 <p>
                   The broader vision is to make LucidScript useful for documentation-heavy environments where users
                   may need to process interviews, notes, images, or statement data quickly and consistently.
                 </p>
+                <br/>
+                <h2>API usage</h2>
+                  <p>
+                    LucidScript currently relies mostly on locally running tools instead of heavy paid external APIs.
+                    Whisper transcription runs locally on the server using the configured model, and EasyOCR also runs
+                    locally for image text extraction. This reduces external dependencies and keeps the system portable and easier to deploy.
+                  </p>
+                <p>
+                  The main external-style service in the current workflow is translation through
+                  <code>deep-translator</code>. That is only used when the user selects translation. In a larger shared
+                  production version, API usage would need rate limits, key management, usage monitoring, and a plan for
+                  handling costs if multiple users were submitting jobs at the same time.
+                </p>
+                <br/>
+                <h2>Technical risks</h2>
+                  <ul>
+                    <li><strong>Audio processing load:</strong> Whisper transcription is CPU-intensive and can slow health checks or response times during longer uploads.</li>
+                    <li><strong>OCR reliability:</strong> image extraction quality depends heavily on resolution, lighting, layout, and language support.</li>
+                    <li><strong>Translation dependency:</strong> optional translation adds another failure point if the translation service is unavailable or inconsistent.</li>
+                    <li><strong>Pipeline complexity:</strong> audio, OCR, witness statements, and formatted exports each fail differently, so debugging must identify the exact step where processing broke.</li>
+                    <li><strong>Storage growth:</strong> generated output files and saved document history will continue growing unless retention or cleanup rules are added.</li>
+                    <li><strong>Deployment limits:</strong> lightweight hosting is fine for the MVP, but larger workloads may require stronger compute resources or background job handling.</li>
+                  </ul>
+                  <br/>
+                  <h2>Helpful links</h2>
+                  <ul>
+                    <li>Main interface: <code>/ui_async</code></li>
+                    <li>Health check: <code>/health</code></li>
+                    <li>API docs: <code>/docs</code></li>
+                    <li>Downloads: <code>/download/&lt;filename&gt;.docx</code></li>
+                  </ul>
+                  <h2>Version info</h2>
+                  <ul>
+                    <li><strong>Build:</strong> 0.3.0</li>
+                    <li><strong>Whisper model:</strong> tiny</li>
+                    <li>Version is displayed across UI and endpoints for debugging.</li>
+                  </ul>
               </div>
-            </div>
-
-            <div class="grid">
-              <div class="mini">
-                <h2>Helpful links</h2>
-                <ul>
-                  <li>Main interface: <code>/ui_async</code> (or hit "Open LucidScript UI")</li>
-                  <li>Health check: <code>/health</code></li>
-                  <li>API docs: <code>/docs</code></li>
-                  <li>Downloads: <code>/download/&lt;filename.docx&gt;</code></li>
-                </ul>
-              </div>
-
-              <div class="mini">
-                <h2>Version notes</h2>
-                <ul>
-                  <li><strong>Current build:</strong> <code>{html.escape(APP_VERSION)}</code></li>
-                  <li><strong>Current Whisper model:</strong> <code>{html.escape(model_name)}</code></li>
-                  <li>This version note is shown on the landing page, async UI, and health endpoint so builds can be identified during testing.</li>
-                </ul>
-              </div>
-            </div>
-
-            <div class="hint">
-              This landing page is the public entry point for LucidScript and is intended to provide a clearer overview before users jump into the full interface.
-            </div>
-          </div>
-        </div>
+                
 
         <script>
           (function () {{
@@ -626,6 +765,14 @@ async def export_security_report(report_text: str = Form(...)):
         )
 
     out = build_security_report_doc(report_text)
+    
+    save_document_record(
+    mode="text",
+    original_filename=None,
+    output_filename=out.name,
+    status="completed",
+    notes="Generated from pasted text input."
+)
 
     return JSONResponse(
         {
@@ -668,6 +815,15 @@ async def export_security_report_from_image(
         final_text = translate_text_to_english(extracted_text) if translated_flag else extracted_text
 
         out = build_security_report_doc(final_text)
+        
+        save_document_record(
+    mode="image",
+    original_filename=image_file.filename,
+    output_filename=out.name,
+    status="completed",
+    translated=translated_flag,
+    notes="Generated from image OCR workflow."
+)
 
         return JSONResponse(
             {
@@ -714,6 +870,14 @@ async def export_witness_statement(
         statement_body=statement_body,
         age_text=age_text,
     )
+    
+    save_document_record(
+    mode="witness",
+    original_filename=None,
+    output_filename=out.name,
+    status="completed",
+    notes=f"Witness statement for {witness_name.strip()}."
+)
 
     return JSONResponse(
         {
@@ -745,6 +909,16 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
         duration = round(float(result.get("duration", 0)), 2) if "duration" in result else None
 
         out = build_transcript_doc("LucidScript Transcript", text, language=language)
+        
+        save_document_record(
+    mode="audio",
+    original_filename=file.filename,
+    output_filename=out.name,
+    status="completed",
+    language=language,
+    translated=False,
+    notes="Generated from basic audio transcription route."
+)
 
         return {
             "message": "Transcription finished. Word doc ready to download.",
@@ -1714,6 +1888,16 @@ async def export_docx_from_audio_v2(
             language=lang,
             translated=translated_flag,
         )
+        
+        save_document_record(
+    mode="audio",
+    original_filename=file.filename,
+    output_filename=out.name,
+    status="completed",
+    language=lang,
+    translated=translated_flag,
+    notes="Generated from async audio route v2."
+)
 
         return JSONResponse(
             {
@@ -1881,6 +2065,16 @@ async def export_docx_from_audio_v3(
             ((translate or "").lower() == "true"),
             labeled,
         )
+        
+        save_document_record(
+    mode="audio",
+    original_filename=file.filename,
+    output_filename=out.name,
+    status="completed",
+    language=result.get("language", "unknown"),
+    translated=((translate or "").lower() == "true"),
+    notes="Generated from deposition audio route v3."
+)
 
         return JSONResponse(
             {

@@ -8,3 +8,4 @@ numpy
 easyocr
 Pillow
 deep-translator
+sqlalchemy
