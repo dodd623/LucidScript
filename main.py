@@ -6,6 +6,7 @@ import tempfile, os, pathlib, uuid, re, subprocess, shlex, textwrap, html
 from typing import List, Tuple
 import whisper
 import easyocr
+import json
 from deep_translator import GoogleTranslator
 from docx import Document
 from datetime import datetime
@@ -16,10 +17,10 @@ app = FastAPI()
 
 APP_VERSION = os.getenv("APP_VERSION", "0.3.1").strip()
 
-model_name = os.getenv("WHISPER_MODEL", "tiny").strip().lower()
+model_name = os.getenv("WHISPER_MODEL", "medium").strip().lower()
 allowed_models = {"tiny", "base", "small", "medium", "large"}
 if model_name not in allowed_models:
-    model_name = "tiny"
+    model_name = "medium"
 
 model = whisper.load_model(model_name)
 
@@ -352,7 +353,7 @@ def landing_page_html() -> str:
             <h2>What LucidScript does</h2>
             <p>
               LucidScript is designed to take raw source material like audio, typed notes, image-based text,
-              and witness statement content, then turn that information into clean, downloadable Word documents.
+              and other video content, then turn that information into clean, downloadable Word documents.
             </p>
             <p>
               The goal is to reduce manual formatting work and make it easier to move from rough evidence or notes
@@ -366,7 +367,6 @@ def landing_page_html() -> str:
                   <li><strong>Audio Transcription:</strong> upload supported audio/video files and export transcript-style documents.</li>
                   <li><strong>Text Input:</strong> paste written content and convert it into a formatted report document.</li>
                   <li><strong>Image Upload:</strong> extract text from images and optionally translate it to English before export.</li>
-                  <li><strong>Witness Statement:</strong> fill in structured witness information and generate a templated statement.</li>
                 </ul>
               </div>
 
@@ -462,7 +462,7 @@ def landing_page_html() -> str:
                     <li><strong>Audio processing load:</strong> Whisper transcription is CPU-intensive and can slow health checks or response times during longer uploads.</li>
                     <li><strong>OCR reliability:</strong> image extraction quality depends heavily on resolution, lighting, layout, and language support.</li>
                     <li><strong>Translation dependency:</strong> optional translation adds another failure point if the translation service is unavailable or inconsistent.</li>
-                    <li><strong>Pipeline complexity:</strong> audio, OCR, witness statements, and formatted exports each fail differently, so debugging must identify the exact step where processing broke.</li>
+                    <li><strong>Pipeline complexity:</strong> audio, OCR, videos, and formatted exports each fail differently, so debugging must identify the exact step where processing broke.</li>
                     <li><strong>Storage growth:</strong> generated output files and saved document history will continue growing unless retention or cleanup rules are added.</li>
                     <li><strong>Deployment limits:</strong> lightweight hosting is fine for the MVP, but larger workloads may require stronger compute resources or background job handling.</li>
                   </ul>
@@ -523,6 +523,17 @@ async def health_check():
     }
 
 
+@app.get("/test_youtube")
+def test_youtube(url: str):
+    path, meta = download_youtube_audio(url)
+
+    return {
+        "audio_path": path,
+        "title": meta.get("title"),
+        "duration": meta.get("duration"),
+    }
+
+
 @app.get("/ui", response_class=HTMLResponse)
 def upload_ui():
     return """
@@ -552,7 +563,7 @@ def upload_ui():
       <body>
         <div class="wrap">
           <h1>LucidScript</h1>
-          <p>Upload audio → get a transcript → auto-format to a .docx.</p>
+         <p>Upload audio or paste a YouTube URL → optional language/translate → choose output style → download .docx.</p>
           <div class="card">
             <form action="/export_docx_from_audio" enctype="multipart/form-data" method="post">
               <label for="file">Select an audio file:</label><br/><br/>
@@ -684,34 +695,34 @@ def replace_placeholders_in_doc(doc: Document, replacements: dict):
                     replace_placeholders_in_paragraph(paragraph, replacements)
 
 
-def build_witness_statement_doc(
-    witness_name: str,
-    occupation: str,
-    statement_body: str,
-    age_text: str = "Over 18",
-    date_text: str | None = None,
-):
-    if not WITNESS_TEMPLATE_PATH.exists():
-        raise HTTPException(
-            status_code=500,
-            detail="Witness statement template file was not found in the templates folder.",
-        )
+# def build_witness_statement_doc(
+#     witness_name: str,
+#     occupation: str,
+#     statement_body: str,
+#     age_text: str = "Over 18",
+#     date_text: str | None = None,
+# ):
+#     if not WITNESS_TEMPLATE_PATH.exists():
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Witness statement template file was not found in the templates folder.",
+#         )
 
-    doc = Document(WITNESS_TEMPLATE_PATH.as_posix())
+#     doc = Document(WITNESS_TEMPLATE_PATH.as_posix())
 
-    replacements = {
-        "{{WITNESS_NAME}}": witness_name.strip(),
-        "{{OCCUPATION}}": occupation.strip(),
-        "{{STATEMENT_BODY}}": statement_body.strip(),
-        "{{DATE}}": (date_text or datetime.now().strftime("%m/%d/%Y")).strip(),
-        "{{AGE}}": age_text.strip(),
-    }
+#     replacements = {
+#         "{{WITNESS_NAME}}": witness_name.strip(),
+#         "{{OCCUPATION}}": occupation.strip(),
+#         "{{STATEMENT_BODY}}": statement_body.strip(),
+#         "{{DATE}}": (date_text or datetime.now().strftime("%m/%d/%Y")).strip(),
+#         "{{AGE}}": age_text.strip(),
+#     }
 
-    replace_placeholders_in_doc(doc, replacements)
+#     replace_placeholders_in_doc(doc, replacements)
 
-    out = OUTPUT_DIR / f"witness_statement_{uuid.uuid4().hex[:8]}.docx"
-    doc.save(out.as_posix())
-    return out
+#     out = OUTPUT_DIR / f"witness_statement_{uuid.uuid4().hex[:8]}.docx"
+#     doc.save(out.as_posix())
+#     return out
 
 
 def extract_text_from_image(image_path: str) -> str:
@@ -794,164 +805,164 @@ def format_docx(req: FormatRequest):
     return {"docx_path": str(out)}
 
 
-@app.post("/export_security_report")
-async def export_security_report(report_text: str = Form(...)):
-    if not report_text.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="No report text was provided.",
-        )
+# @app.post("/export_security_report")
+# async def export_security_report(report_text: str = Form(...)):
+#     if not report_text.strip():
+#         raise HTTPException(
+#             status_code=400,
+#             detail="No report text was provided.",
+#         )
 
-    out = await asyncio.to_thread(build_security_report_doc, report_text)
+#     out = await asyncio.to_thread(build_security_report_doc, report_text)
 
-    save_document_record(
-        mode="text",
-        original_filename=None,
-        output_filename=out.name,
-        status="completed",
-        notes="Generated from pasted text input.",
-    )
+#     save_document_record(
+#         mode="text",
+#         original_filename=None,
+#         output_filename=out.name,
+#         status="completed",
+#         notes="Generated from pasted text input.",
+#     )
 
-    return JSONResponse(
-        {
-            "message": "Text transcript formatted successfully.",
-            "docx_path": str(out),
-            "docx_filename": out.name,
-        }
-    )
-
-
-@app.post("/export_security_report_from_image")
-async def export_security_report_from_image(
-    image_files: List[UploadFile] = File(...),
-    translate_to_english: str | None = Form(None),
-):
-    allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-    translated_flag = (translate_to_english or "").lower() == "true"
-
-    if not image_files:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one image file is required.",
-        )
-
-    tmp_paths: List[str] = []
-    file_results: List[dict] = []
-
-    try:
-        for image_file in image_files:
-            suffix = os.path.splitext(image_file.filename or "")[-1].lower()
-
-            if suffix not in allowed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unsupported image format for {image_file.filename or 'uploaded file'}. Use PNG, JPG, JPEG, WEBP, or BMP.",
-                )
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(await image_file.read())
-                tmp_path = tmp.name
-                tmp_paths.append(tmp_path)
-
-            extracted_text = await asyncio.to_thread(extract_text_from_image, tmp_path)
-            final_text = (
-                await asyncio.to_thread(translate_text_to_english, extracted_text)
-                if translated_flag
-                else extracted_text
-            )
-
-            file_results.append(
-                {
-                    "filename": image_file.filename or pathlib.Path(tmp_path).name,
-                    "extracted_text": extracted_text,
-                    "final_text": final_text,
-                    "has_text": bool(extracted_text.strip()),
-                }
-            )
-
-        if not any(item["has_text"] for item in file_results):
-            raise HTTPException(
-                status_code=400,
-                detail="No readable text was found in any of the uploaded images.",
-            )
-
-        out = await asyncio.to_thread(
-            build_multi_image_security_report_doc, file_results
-        )
-
-        save_document_record(
-            mode="image",
-            original_filename=", ".join(item["filename"] for item in file_results),
-            output_filename=out.name,
-            status="completed",
-            translated=translated_flag,
-            notes="Generated from multi-image OCR workflow.",
-        )
-
-        return JSONResponse(
-            {
-                "message": "Text transcript generated from images successfully.",
-                "docx_path": str(out),
-                "docx_filename": out.name,
-                "files": file_results,
-                "translated": translated_flag,
-                "image_count": len(file_results),
-                "version": APP_VERSION,
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong while reading the uploaded images. Please try clearer images.",
-        )
-    finally:
-        for tmp_path in tmp_paths:
-            try:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except Exception:
-                pass
+#     return JSONResponse(
+#         {
+#             "message": "Text transcript formatted successfully.",
+#             "docx_path": str(out),
+#             "docx_filename": out.name,
+#         }
+#     )
 
 
-@app.post("/export_witness_statement")
-async def export_witness_statement(
-    witness_name: str = Form(...),
-    occupation: str = Form(...),
-    statement_body: str = Form(...),
-    age_text: str = Form("Over 18"),
-):
-    if not witness_name.strip():
-        raise HTTPException(status_code=400, detail="Witness name is required.")
-    if not occupation.strip():
-        raise HTTPException(status_code=400, detail="Occupation is required.")
-    if not statement_body.strip():
-        raise HTTPException(status_code=400, detail="Statement body is required.")
+# @app.post("/export_security_report_from_image")
+# async def export_security_report_from_image(
+#     image_files: List[UploadFile] = File(...),
+#     translate_to_english: str | None = Form(None),
+# ):
+#     allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+#     translated_flag = (translate_to_english or "").lower() == "true"
 
-    out = await asyncio.to_thread(
-        build_witness_statement_doc,
-        witness_name=witness_name,
-        occupation=occupation,
-        statement_body=statement_body,
-        age_text=age_text,
-    )
+#     if not image_files:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="At least one image file is required.",
+#         )
 
-    save_document_record(
-        mode="witness",
-        original_filename=None,
-        output_filename=out.name,
-        status="completed",
-        notes=f"Witness statement for {witness_name.strip()}.",
-    )
+#     tmp_paths: List[str] = []
+#     file_results: List[dict] = []
 
-    return JSONResponse(
-        {
-            "message": "Witness statement generated successfully.",
-            "docx_path": str(out),
-            "docx_filename": out.name,
-        }
-    )
+#     try:
+#         for image_file in image_files:
+#             suffix = os.path.splitext(image_file.filename or "")[-1].lower()
+
+#             if suffix not in allowed:
+#                 raise HTTPException(
+#                     status_code=400,
+#                     detail=f"Unsupported image format for {image_file.filename or 'uploaded file'}. Use PNG, JPG, JPEG, WEBP, or BMP.",
+#                 )
+
+#             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+#                 tmp.write(await image_file.read())
+#                 tmp_path = tmp.name
+#                 tmp_paths.append(tmp_path)
+
+#             extracted_text = await asyncio.to_thread(extract_text_from_image, tmp_path)
+#             final_text = (
+#                 await asyncio.to_thread(translate_text_to_english, extracted_text)
+#                 if translated_flag
+#                 else extracted_text
+#             )
+
+#             file_results.append(
+#                 {
+#                     "filename": image_file.filename or pathlib.Path(tmp_path).name,
+#                     "extracted_text": extracted_text,
+#                     "final_text": final_text,
+#                     "has_text": bool(extracted_text.strip()),
+#                 }
+#             )
+
+#         if not any(item["has_text"] for item in file_results):
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="No readable text was found in any of the uploaded images.",
+#             )
+
+#         out = await asyncio.to_thread(
+#             build_multi_image_security_report_doc, file_results
+#         )
+
+#         save_document_record(
+#             mode="image",
+#             original_filename=", ".join(item["filename"] for item in file_results),
+#             output_filename=out.name,
+#             status="completed",
+#             translated=translated_flag,
+#             notes="Generated from multi-image OCR workflow.",
+#         )
+
+#         return JSONResponse(
+#             {
+#                 "message": "Text transcript generated from images successfully.",
+#                 "docx_path": str(out),
+#                 "docx_filename": out.name,
+#                 "files": file_results,
+#                 "translated": translated_flag,
+#                 "image_count": len(file_results),
+#                 "version": APP_VERSION,
+#             }
+#         )
+#     except HTTPException:
+#         raise
+#     except Exception:
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Something went wrong while reading the uploaded images. Please try clearer images.",
+#         )
+#     finally:
+#         for tmp_path in tmp_paths:
+#             try:
+#                 if tmp_path and os.path.exists(tmp_path):
+#                     os.remove(tmp_path)
+#             except Exception:
+#                 pass
+
+
+# @app.post("/export_witness_statement")
+# async def export_witness_statement(
+#     witness_name: str = Form(...),
+#     occupation: str = Form(...),
+#     statement_body: str = Form(...),
+#     age_text: str = Form("Over 18"),
+# ):
+#     if not witness_name.strip():
+#         raise HTTPException(status_code=400, detail="Witness name is required.")
+#     if not occupation.strip():
+#         raise HTTPException(status_code=400, detail="Occupation is required.")
+#     if not statement_body.strip():
+#         raise HTTPException(status_code=400, detail="Statement body is required.")
+
+#     out = await asyncio.to_thread(
+#         build_witness_statement_doc,
+#         witness_name=witness_name,
+#         occupation=occupation,
+#         statement_body=statement_body,
+#         age_text=age_text,
+#     )
+
+#     save_document_record(
+#         mode="witness",
+#         original_filename=None,
+#         output_filename=out.name,
+#         status="completed",
+#         notes=f"Witness statement for {witness_name.strip()}.",
+#     )
+
+#     return JSONResponse(
+#         {
+#             "message": "Witness statement generated successfully.",
+#             "docx_path": str(out),
+#             "docx_filename": out.name,
+#         }
+#     )
 
 
 @app.post("/export_docx_from_audio")
@@ -1343,8 +1354,7 @@ def upload_ui_async():
 
           <h1>LucidScript</h1>
           <div class="version">Version __APP_VERSION__ • Whisper model: __MODEL_NAME__</div>
-          <p>Choose a mode, then process audio, pasted text, image text, or witness statements into a formatted .docx.</p>
-
+          <p>Choose a mode, then process audio, pasted text, or image text into a formatted .docx.</p>
           <div class="card">
             <div class="mode-row">
               <label for="mode">Mode</label>
@@ -1352,77 +1362,97 @@ def upload_ui_async():
                 <option value="audio">Audio Transcription</option>
                 <option value="text">Text Input</option>
                 <option value="image">Image Upload</option>
-                <option value="witness">Witness Statement</option>
               </select>
             </div>
 
             <div id="mode-audio">
               <h2>Audio Transcription</h2>
-              <p>Upload audio → optional language/translate → choose output style → download .docx.</p>
+              <p>Upload audio or paste a YouTube URL → optional language/translate → choose output style → download .docx.</p>
               <div class="hint" style="margin-bottom:12px;">
                 Pipeline: upload → temporary file → Whisper transcription → optional translation / speaker flow → DOCX export
               </div>
 
               <form id="ls-form">
-                <label>Audio file</label>
-                <input id="file" type="file" name="file"
-                       accept=".wav,.mp3,.m4a,.aac,.flac,.ogg,.webm,.mp4,audio/*,video/*" required />
+  <label for="audio_source">Audio source</label>
+  <select id="audio_source" name="audio_source">
+    <option value="upload">Upload File</option>
+    <option value="youtube">YouTube URL</option>
+  </select>
 
-                <div class="row" style="margin-top:12px">
-                  <div>
-                    <label>Language (choose or Auto)</label>
-                    <select id="language" name="language">
-                      <option value="">Auto-detect</option>
-                      <option value="en">English — en</option>
-                      <option value="es">Spanish — es</option>
-                      <option value="pt">Portuguese — pt</option>
-                      <option value="zh">Mandarin Chinese — zh</option>
-                      <option value="fr">French — fr</option>
-                    </select>
-                  </div>
+  <div id="audio-upload-group" style="margin-top:12px;">
+    <label>Audio file</label>
+    <input id="file" type="file" name="file"
+           accept=".wav,.mp3,.m4a,.aac,.flac,.ogg,.webm,.mp4,audio/*,video/*" />
+  </div>
 
-                  <div class="stack" style="margin-top:24px">
-                    <input type="checkbox" id="translate" name="translate" value="true" />
-                    <label for="translate" style="margin:0;">Translate to English</label>
-                  </div>
-                </div>
+  <div id="youtube-url-group" class="hidden" style="margin-top:12px;">
+    <label for="youtube_url">YouTube URL</label>
+    <input
+      id="youtube_url"
+      type="text"
+      name="youtube_url"
+      placeholder="Paste a YouTube link here..."
+    />
+  </div>
 
-                <div class="row" style="margin-top:12px">
-                  <fieldset>
-                    <legend>Output style</legend>
-                    <div class="stack">
-                      <input type="radio" id="style-standard" name="style" value="standard" checked />
-                      <label for="style-standard" style="margin:0;">Standard (paragraph doc)</label>
-                    </div>
-                    <div class="stack" style="margin-top:6px">
-                      <input type="radio" id="style-deposition" name="style" value="deposition" />
-                      <label for="style-deposition" style="margin:0;">Deposition (Q/A with speaker labels)</label>
-                    </div>
-                  </fieldset>
+  <div class="row" style="margin-top:12px">
+    <div>
+      <label>Language (choose or Auto)</label>
+      <select id="language" name="language">
+        <option value="">Auto-detect</option>
+        <option value="en">English — en</option>
+        <option value="es">Spanish — es</option>
+        <option value="pt">Portuguese — pt</option>
+        <option value="zh">Mandarin Chinese — zh</option>
+        <option value="fr">French — fr</option>
+      </select>
+    </div>
 
-                  <fieldset>
-                    <legend>Speaker detection</legend>
-                    <div class="stack">
-                      <input type="checkbox" id="diarize" name="diarize" value="true" />
-                      <label for="diarize" style="margin:0;">Detect speakers (beta)</label>
-                    </div>
-                    <small>Requires ffmpeg; optional HuggingFace token improves labeling.</small>
-                  </fieldset>
-                </div>
+    <div class="stack" style="margin-top:24px">
+      <input type="checkbox" id="translate" name="translate" value="true" />
+      <label for="translate" style="margin:0;">Translate to English</label>
+    </div>
+  </div>
 
-                <button id="audio-submit-btn" type="submit">Transcribe & Export</button>
-              </form>
+  <div class="row" style="margin-top:12px">
+    <fieldset>
+      <legend>Output style</legend>
+      <div class="stack">
+        <input type="radio" id="style-standard" name="style" value="standard" checked />
+        <label for="style-standard" style="margin:0;">Standard (paragraph doc)</label>
+      </div>
+      <div class="stack" style="margin-top:6px">
+        <input type="radio" id="style-deposition" name="style" value="deposition" />
+        <label for="style-deposition" style="margin:0;">Deposition (Q/A with speaker labels)</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Speaker detection</legend>
+      <div class="stack">
+        <input type="checkbox" id="diarize" name="diarize" value="true" />
+        <label for="diarize" style="margin:0;">Detect speakers (beta)</label>
+      </div>
+      <small>Requires ffmpeg; optional HuggingFace token improves labeling.</small>
+    </fieldset>
+  </div>
+
+  <button id="audio-submit-btn" type="submit">Transcribe & Export</button>
+</form>
 
               <div id="audio-progress-wrap" class="progress-wrap">
-                <div id="audio-progress-label" class="progress-label">Preparing upload…</div>
-                <div class="progress-bar-shell">
-                  <div id="audio-progress-fill" class="progress-bar-fill"></div>
-                </div>
-                <div class="progress-meta">
-                  <span id="audio-progress-stage">Waiting to start</span>
-                  <span id="audio-progress-percent">0%</span>
-                </div>
-              </div>
+  <div id="audio-progress-label" class="progress-label">Preparing upload…</div>
+  <div class="progress-bar-shell">
+    <div id="audio-progress-fill" class="progress-bar-fill"></div>
+  </div>
+  <div class="progress-meta">
+    <span id="audio-progress-stage">Waiting to start</span>
+    <span id="audio-progress-percent">0%</span>
+  </div>
+  <div id="audio-progress-explainer" class="hint" style="margin-top:10px; text-align:left;">
+    Large audio and YouTube jobs can take several minutes. If the bar pauses, LucidScript is usually still transcribing in the background. Please do not refresh or close this page while processing is in progress.
+  </div>
+</div>
 
               <div class="hint">
                 Supported: <code>WAV</code>, <code>MP3</code>, <code>M4A</code>, <code>AAC</code>, <code>FLAC</code>, <code>OGG</code>, <code>WEBM</code>, <code>MP4</code>
@@ -1504,30 +1534,6 @@ def upload_ui_async():
               </div>
             </div>
 
-            <div id="mode-witness" class="hidden">
-              <h2>Witness Statement</h2>
-              <p>Fill in the witness details and statement body, then export using your witness statement template.</p>
-
-              <form id="witness-form">
-                <div style="margin-top:12px">
-                  <label for="witness_name">Witness name</label>
-                  <input id="witness_name" type="text" name="witness_name" placeholder="Enter witness name" required />
-                </div>
-
-                <div style="margin-top:12px">
-                  <label for="occupation">Occupation</label>
-                  <input id="occupation" type="text" name="occupation" placeholder="Enter occupation" required />
-                </div>
-
-                <div style="margin-top:12px">
-                  <label for="statement_body">Statement body</label>
-                  <textarea id="statement_body" name="statement_body" placeholder="Type or paste the witness statement body here..." required></textarea>
-                </div>
-
-                <button type="submit">Generate Witness Statement</button>
-              </form>
-            </div>
-
             <div id="shared-status" class="status result-box"></div>
             <div id="shared-result" class="result-box"></div>
 
@@ -1541,7 +1547,6 @@ def upload_ui_async():
           const audioPanel = document.getElementById('mode-audio');
           const textPanel = document.getElementById('mode-text');
           const imagePanel = document.getElementById('mode-image');
-          const witnessPanel = document.getElementById('mode-witness');
 
           const sharedStatusEl = document.getElementById('shared-status');
           const sharedResultEl = document.getElementById('shared-result');
@@ -1577,25 +1582,22 @@ def upload_ui_async():
           });
 
           function setMode(mode) {
-            audioPanel.classList.add('hidden');
-            textPanel.classList.add('hidden');
-            imagePanel.classList.add('hidden');
-            witnessPanel.classList.add('hidden');
+  audioPanel.classList.add('hidden');
+  textPanel.classList.add('hidden');
+  imagePanel.classList.add('hidden');
 
-            if (mode === 'audio') {
-              audioPanel.classList.remove('hidden');
-            } else if (mode === 'text') {
-              textPanel.classList.remove('hidden');
-            } else if (mode === 'image') {
-              imagePanel.classList.remove('hidden');
-            } else if (mode === 'witness') {
-              witnessPanel.classList.remove('hidden');
-            }
+  if (mode === 'audio') {
+    audioPanel.classList.remove('hidden');
+  } else if (mode === 'text') {
+    textPanel.classList.remove('hidden');
+  } else if (mode === 'image') {
+    imagePanel.classList.remove('hidden');
+  }
 
-            sharedStatusEl.className = 'status result-box';
-            sharedStatusEl.textContent = '';
-            sharedResultEl.innerHTML = '';
-          }
+  sharedStatusEl.className = 'status result-box';
+  sharedStatusEl.textContent = '';
+  sharedResultEl.innerHTML = '';
+}
 
           modeSelect.addEventListener('change', (e) => {
             setMode(e.target.value);
@@ -1629,8 +1631,24 @@ def upload_ui_async():
           }
 
           function showProgress(wrap) {
-            wrap.classList.add('show');
-          }
+  wrap.classList.add('show');
+}
+
+function updateAudioSourceUI() {
+  const source = audioSourceSelect.value;
+
+  if (source === 'youtube') {
+    audioUploadGroup.classList.add('hidden');
+    youtubeUrlGroup.classList.remove('hidden');
+    audioFileInput.required = false;
+    youtubeUrlInput.required = true;
+  } else {
+    audioUploadGroup.classList.remove('hidden');
+    youtubeUrlGroup.classList.add('hidden');
+    audioFileInput.required = true;
+    youtubeUrlInput.required = false;
+  }
+}
 
           function setProgress(fill, label, stage, percentEl, percent, labelText, stageText) {
             const safePercent = Math.max(0, Math.min(100, percent));
@@ -1641,34 +1659,64 @@ def upload_ui_async():
           }
 
           function makeProcessingSimulator(fill, label, stage, percentEl, steps) {
-            let index = 0;
-            let interval = null;
+  let index = 0;
+  let interval = null;
+  let crawlInterval = null;
+  let currentPercent = 0;
 
-            function start() {
-              stop();
-              interval = setInterval(() => {
-                if (index >= steps.length) {
-                  stop();
-                  return;
-                }
-                const step = steps[index];
-                setProgress(fill, label, stage, percentEl, step.percent, step.label, step.stage);
-                index += 1;
-              }, 900);
-            }
+  function start() {
+    stop();
+    interval = setInterval(() => {
+      if (index >= steps.length) {
+        clearInterval(interval);
+        interval = null;
+        beginSlowCrawl();
+        return;
+      }
 
-            function stop(finalPercent = null, finalLabel = null, finalStage = null) {
-              if (interval) {
-                clearInterval(interval);
-                interval = null;
-              }
-              if (finalPercent !== null) {
-                setProgress(fill, label, stage, percentEl, finalPercent, finalLabel || '', finalStage || '');
-              }
-            }
+      const step = steps[index];
+      currentPercent = step.percent;
+      setProgress(fill, label, stage, percentEl, step.percent, step.label, step.stage);
+      index += 1;
+    }, 900);
+  }
 
-            return { start, stop };
-          }
+  function beginSlowCrawl() {
+    if (crawlInterval) return;
+
+    crawlInterval = setInterval(() => {
+      if (currentPercent < 92) {
+        currentPercent += 1;
+        setProgress(
+          fill,
+          label,
+          stage,
+          percentEl,
+          currentPercent,
+          'Still processing…',
+          'Transcribing audio — longer jobs can take several minutes'
+        );
+      }
+    }, 2500);
+  }
+
+  function stop(finalPercent = null, finalLabel = null, finalStage = null) {
+    if (interval) {
+      clearInterval(interval);
+      interval = null;
+    }
+    if (crawlInterval) {
+      clearInterval(crawlInterval);
+      crawlInterval = null;
+    }
+    if (finalPercent !== null) {
+      currentPercent = finalPercent;
+      setProgress(fill, label, stage, percentEl, finalPercent, finalLabel || '', finalStage || '');
+    }
+  }
+
+  return { start, stop };
+}
 
           function sendWithProgress({
             endpoint,
@@ -1695,26 +1743,38 @@ def upload_ui_async():
               xhr.open('POST', endpoint, true);
 
               xhr.upload.onprogress = function (event) {
-                if (event.lengthComputable) {
-                  const uploadPercent = Math.min(35, (event.loaded / event.total) * 35);
-                  setProgress(
-                    fill,
-                    label,
-                    stage,
-                    percentEl,
-                    uploadPercent,
-                    uploadLabel,
-                    'Uploading file to server'
-                  );
-                } else {
-                  setProgress(fill, label, stage, percentEl, 10, uploadLabel, 'Uploading file to server');
-                }
-              };
+  if (event.lengthComputable) {
+    const uploadPercent = Math.min(35, (event.loaded / event.total) * 35);
+    setProgress(
+      fill,
+      label,
+      stage,
+      percentEl,
+      uploadPercent,
+      uploadLabel,
+      uploadLabel === 'Submitting YouTube link…'
+        ? 'Submitting link'
+        : 'Uploading file to server'
+    );
+  } else {
+    setProgress(
+      fill,
+      label,
+      stage,
+      percentEl,
+      10,
+      uploadLabel,
+      uploadLabel === 'Submitting YouTube link…'
+        ? 'Submitting link'
+        : 'Uploading file to server'
+    );
+  }
+};
 
               xhr.onreadystatechange = function () {
-                if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
-                  simulator.start();
-                }
+                if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED && uploadLabel !== 'Submitting YouTube link…') {
+  simulator.start();
+}
 
                 if (xhr.readyState === XMLHttpRequest.DONE) {
                   simulator.stop();
@@ -1746,6 +1806,11 @@ def upload_ui_async():
               };
 
               xhr.send(formData);
+
+              // Start progress immediately for YouTube jobs
+              if (uploadLabel === 'Submitting YouTube link…') {
+              simulator.start();
+              }
             });
           }
 
@@ -1766,57 +1831,96 @@ def upload_ui_async():
           }
 
           const audioForm = document.getElementById('ls-form');
+          const audioSourceSelect = document.getElementById('audio_source');
+          const audioUploadGroup = document.getElementById('audio-upload-group');
+          const youtubeUrlGroup = document.getElementById('youtube-url-group');
+          const audioFileInput = document.getElementById('file');
+          const youtubeUrlInput = document.getElementById('youtube_url');
           audioForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            sharedStatusEl.className = 'status result-box';
-            sharedResultEl.innerHTML = '';
-            sharedStatusEl.textContent = 'Starting audio job…';
+  e.preventDefault();
+  sharedStatusEl.className = 'status result-box';
+  sharedResultEl.innerHTML = '';
+  sharedStatusEl.textContent = 'Starting audio job…';
 
-            const fd = new FormData(audioForm);
-            fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
-            fd.set('diarize', document.getElementById('diarize').checked ? 'true' : 'false');
+  const fd = new FormData(audioForm);
+  fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
+  fd.set('diarize', document.getElementById('diarize').checked ? 'true' : 'false');
 
-            const style = (document.querySelector('input[name="style"]:checked') || {}).value || 'standard';
-            const endpoint = style === 'deposition' ? '/export_docx_from_audio_v3' : '/export_docx_from_audio_v2';
+  const style = (document.querySelector('input[name="style"]:checked') || {}).value || 'standard';
+  const source = audioSourceSelect.value;
 
-            try {
-              await sendWithProgress({
-                endpoint,
-                formData: fd,
-                wrap: audioProgressWrap,
-                fill: audioProgressFill,
-                label: audioProgressLabel,
-                stage: audioProgressStage,
-                percentEl: audioProgressPercent,
-                submitButton: audioSubmitBtn,
-                uploadLabel: 'Uploading audio…',
-                processingSteps: [
-                  { percent: 45, label: 'Upload complete', stage: 'Temporary file created' },
-                  { percent: 60, label: 'Processing audio…', stage: 'Running Whisper transcription' },
-                  { percent: 75, label: 'Building output…', stage: 'Cleaning / structuring transcript' },
-                  { percent: 90, label: 'Formatting document…', stage: 'Generating DOCX' },
-                  { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
-                ],
-                onSuccess: (data) => {
-                  showSuccess('Done – .docx is ready below.');
+  let endpoint = style === 'deposition'
+    ? '/export_docx_from_audio_v3'
+    : '/export_docx_from_audio_v2';
 
-                  const lang = data.language || 'unknown';
-                  const dur = (data.duration_sec !== null && data.duration_sec !== undefined) ? data.duration_sec : '—';
-                  const fname = data.docx_filename;
+  if (source === 'youtube') {
+    endpoint = style === 'deposition'
+      ? '/export_docx_from_youtube_v3'
+      : '/export_docx_from_youtube_v2';
+  }
 
-                  sharedResultEl.innerHTML = `
-                    <div class="mono">Language: ${escapeHtml(lang)} | Duration: ${escapeHtml(dur)}s | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
-                    <div style="margin-top:8px">
-                      <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
-                    </div>
-                  `;
-                },
-                onErrorMessage: 'Transcription failed. Try a smaller file or shorter clip.'
-              });
-            } catch (err) {
-              showError(String(err || 'Transcription failed.'));
-            }
-          });
+  const uploadLabel = source === 'youtube'
+    ? 'Submitting YouTube link…'
+    : 'Uploading audio…';
+
+  const processingSteps = source === 'youtube'
+    ? [
+        { percent: 40, label: 'Link received', stage: 'Downloading video audio' },
+        { percent: 52, label: 'Audio ready', stage: 'Preparing transcription' },
+        { percent: 64, label: 'Transcribing audio…', stage: 'Running Whisper on downloaded audio' },
+        { percent: 78, label: 'Still transcribing…', stage: 'Longer videos may take several minutes' },
+        { percent: 90, label: 'Formatting document…', stage: 'Generating DOCX' },
+        { percent: 98, label: 'Wrapping things up…', stage: 'Preparing download link' }
+      ]
+    : [
+        { percent: 45, label: 'Upload complete', stage: 'Temporary file created' },
+        { percent: 60, label: 'Processing audio…', stage: 'Running Whisper transcription' },
+        { percent: 75, label: 'Building output…', stage: 'Cleaning / structuring transcript' },
+        { percent: 90, label: 'Formatting document…', stage: 'Generating DOCX' },
+        { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
+      ];
+
+  try {
+    await sendWithProgress({
+      endpoint,
+      formData: fd,
+      wrap: audioProgressWrap,
+      fill: audioProgressFill,
+      label: audioProgressLabel,
+      stage: audioProgressStage,
+      percentEl: audioProgressPercent,
+      submitButton: audioSubmitBtn,
+      uploadLabel,
+      processingSteps,
+      onSuccess: (data) => {
+        showSuccess('Done – .docx is ready below.');
+
+        const lang = data.language || 'unknown';
+        const dur = (data.duration_sec !== null && data.duration_sec !== undefined)
+          ? data.duration_sec
+          : '—';
+        const fname = data.docx_filename;
+
+        sharedResultEl.innerHTML = `
+          <div class="mono">
+            Language: ${escapeHtml(lang)} |
+            Duration: ${escapeHtml(dur)}s |
+            Version: ${escapeHtml(data.version || '__APP_VERSION__')}
+          </div>
+          <div style="margin-top:8px">
+            <a href="/download/${encodeURIComponent(fname)}">
+              ⬇️ Download ${escapeHtml(fname)}
+            </a>
+          </div>
+        `;
+      },
+      onErrorMessage: 'Transcription failed. Try a smaller file or shorter clip.'
+    });
+  } catch (err) {
+    showError(String(err || 'Transcription failed.'));
+  }
+});
+
 
           const textForm = document.getElementById('security-form');
           textForm.addEventListener('submit', async (e) => {
@@ -1915,42 +2019,9 @@ def upload_ui_async():
             }
           });
 
-          const witnessForm = document.getElementById('witness-form');
-          witnessForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            sharedStatusEl.className = 'status result-box';
-            sharedResultEl.innerHTML = '';
-            sharedStatusEl.textContent = 'Generating witness statement…';
-
-            const fd = new FormData(witnessForm);
-
-            try {
-              const resp = await fetch('/export_witness_statement', {
-                method: 'POST',
-                body: fd
-              });
-              const data = await resp.json();
-
-              if (!resp.ok) {
-                showError(data.detail || 'Witness statement generation failed.');
-                return;
-              }
-
-              showSuccess('Done – witness statement .docx is ready below.');
-
-              const fname = data.docx_filename;
-
-              sharedResultEl.innerHTML = `
-                <div style="margin-top:8px">
-                  <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
-                </div>
-              `;
-            } catch (err) {
-              showError('Unexpected error: ' + (err?.message || err));
-            }
-          });
-
-          setMode('audio');
+          audioSourceSelect.addEventListener('change', updateAudioSourceUI);
+updateAudioSourceUI();
+setMode('audio');
         </script>
       </body>
     </html>
@@ -2081,6 +2152,105 @@ def _convert_to_wav(src: str):
         return out
     except Exception:
         return src
+
+
+def download_youtube_audio(url: str) -> tuple[str, dict]:
+    """
+    Downloads audio from a YouTube URL and returns:
+    (local_audio_path, metadata)
+    """
+    try:
+        output_path = (OUTPUT_DIR / f"yt_{uuid.uuid4().hex[:8]}.%(ext)s").as_posix()
+
+        cmd = [
+            "yt-dlp",
+            "-x",  # extract audio
+            "--audio-format",
+            "wav",  # convert to wav (Whisper-friendly)
+            "--no-playlist",
+            "--print-json",
+            "-o",
+            output_path,
+            url,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        # yt-dlp prints JSON metadata to stdout
+        metadata = {}
+        try:
+            metadata = json.loads(result.stdout.splitlines()[-1])
+        except Exception:
+            pass
+
+        # Find actual downloaded file
+        base = output_path.replace(".%(ext)s", "")
+        for ext in [".wav", ".mp3", ".m4a"]:
+            candidate = base + ext
+            if os.path.exists(candidate):
+                return candidate, metadata
+
+        raise Exception("Audio file not found after download.")
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"YouTube download failed: {str(e)}"
+        )
+
+
+async def process_audio_file_to_docx(
+    audio_path: str,
+    original_name: str | None = None,
+    language: str | None = None,
+    translate: bool = False,
+    notes: str | None = None,
+):
+    kwargs = {}
+    if language:
+        kwargs["language"] = language
+    if translate:
+        kwargs["task"] = "translate"
+
+    result = await asyncio.to_thread(model.transcribe, audio_path, **kwargs)
+    text = (result.get("text") or "").strip()
+
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="No speech was detected in this file. Try a different recording.",
+        )
+
+    detected_language = result.get("language", "unknown")
+    duration = (
+        round(float(result.get("duration", 0)), 2) if "duration" in result else None
+    )
+
+    out = await asyncio.to_thread(
+        build_transcript_doc,
+        "LucidScript Transcript",
+        text,
+        detected_language,
+        translate,
+    )
+
+    save_document_record(
+        mode="audio",
+        original_filename=original_name,
+        output_filename=out.name,
+        status="completed",
+        language=detected_language,
+        translated=translate,
+        notes=notes or "Generated from shared audio processing helper.",
+    )
+
+    return {
+        "docx_path": str(out),
+        "docx_filename": out.name,
+        "language": detected_language,
+        "duration_sec": duration,
+        "translated": translate,
+        "version": APP_VERSION,
+    }
 
 
 def _diarize_segments_dep(wav_path: str) -> List[Tuple[float, float, str]]:
@@ -2245,5 +2415,113 @@ async def export_docx_from_audio_v3(
         try:
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+@app.post("/export_docx_from_youtube_v2")
+async def export_docx_from_youtube_v2(
+    youtube_url: str = Form(...),
+    language: str | None = Form(None),
+    translate: bool = Form(False),
+    diarize: bool = Form(False),
+):
+    audio_path = None
+    try:
+        # Download audio
+        audio_path, metadata = download_youtube_audio(youtube_url)
+        title = metadata.get("title") or "youtube_audio"
+
+        # Process
+        result = await process_audio_file_to_docx(
+            audio_path=audio_path,
+            original_name=title,
+            language=language,
+            translate=translate,
+            notes=f"YouTube source: {youtube_url}",
+        )
+
+        return result
+
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+
+
+@app.post("/export_docx_from_youtube_v3")
+async def export_docx_from_youtube_v3(
+    youtube_url: str = Form(...),
+    language: str | None = Form(None),
+    translate: str | None = Form(None),
+    diarize: str | None = Form(None),
+):
+    audio_path = None
+    wav_path = None
+    try:
+        translate_flag = (translate or "").lower() == "true"
+        diarize_flag = (diarize or "").lower() == "true"
+
+        audio_path, metadata = download_youtube_audio(youtube_url)
+        title = metadata.get("title") or "youtube_audio"
+
+        wav_path = _convert_to_wav(audio_path)
+
+        kwargs = {}
+        if language:
+            kwargs["language"] = language
+        if translate_flag:
+            kwargs["task"] = "translate"
+
+        result = await asyncio.to_thread(model.transcribe, wav_path, **kwargs)
+        text = (result.get("text") or "").strip()
+
+        if not text:
+            raise HTTPException(status_code=400, detail="No speech detected.")
+
+        detected_language = result.get("language", "unknown")
+
+        if diarize_flag:
+            dia = await asyncio.to_thread(_diarize_segments_dep, wav_path)
+            labeled = _assign_speakers(result.get("segments", []), dia)
+        else:
+            labeled = _assign_speakers(result.get("segments", []), [])
+
+        out = await asyncio.to_thread(
+            _make_deposition_doc,
+            "LucidScript Deposition",
+            detected_language,
+            translate_flag,
+            labeled,
+        )
+
+        save_document_record(
+            mode="audio",
+            original_filename=title,
+            output_filename=out.name,
+            status="completed",
+            language=detected_language,
+            translated=translate_flag,
+            notes=f"YouTube source: {youtube_url}",
+        )
+
+        return {
+            "docx_filename": out.name,
+            "language": detected_language,
+            "translated": translate_flag,
+            "version": APP_VERSION,
+        }
+
+    finally:
+        try:
+            if wav_path and wav_path != audio_path and os.path.exists(wav_path):
+                os.remove(wav_path)
+        except Exception:
+            pass
+        try:
+            if audio_path and os.path.exists(audio_path):
+                os.remove(audio_path)
         except Exception:
             pass
