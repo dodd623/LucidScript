@@ -22,7 +22,13 @@ allowed_models = {"tiny", "base", "small", "medium", "large"}
 if model_name not in allowed_models:
     model_name = "medium"
 
-model = whisper.load_model(model_name)
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        model = whisper.load_model(model_name)
+    return model
 
 ocr_reader = None
 ocr_reader_ch = None
@@ -778,7 +784,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
-        result = await asyncio.to_thread(model.transcribe, tmp_path)
+        result = await asyncio.to_thread(get_model().transcribe, tmp_path)
         text = (result.get("text") or "").strip()
         return {"transcript": text}
     except Exception:
@@ -974,7 +980,7 @@ async def export_docx_from_audio(file: UploadFile = File(...)):
             tmp.write(await file.read())
             tmp_path = tmp.name
 
-        result = await asyncio.to_thread(model.transcribe, tmp_path)
+        result = await asyncio.to_thread(get_model().transcribe, tmp_path)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(
@@ -2064,7 +2070,7 @@ async def export_docx_from_audio_v2(
         if (translate or "").lower() == "true":
             kwargs["task"] = "translate"
 
-        result = await asyncio.to_thread(model.transcribe, tmp_path, **kwargs)
+        result = await asyncio.to_thread(get_model().transcribe, tmp_path, **kwargs)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(
@@ -2211,7 +2217,7 @@ async def process_audio_file_to_docx(
     if translate:
         kwargs["task"] = "translate"
 
-    result = await asyncio.to_thread(model.transcribe, audio_path, **kwargs)
+    result = await asyncio.to_thread(get_model().transcribe, audio_path, **kwargs)
     text = (result.get("text") or "").strip()
 
     if not text:
@@ -2349,7 +2355,7 @@ async def export_docx_from_audio_v3(
         if (translate or "").lower() == "true":
             kwargs["task"] = "translate"
 
-        result = await asyncio.to_thread(model.transcribe, tmp_path, **kwargs)
+        result = await asyncio.to_thread(get_model().transcribe, tmp_path, **kwargs)
         text = (result.get("text") or "").strip()
         if not text:
             raise HTTPException(
@@ -2475,7 +2481,7 @@ async def export_docx_from_youtube_v3(
         if translate_flag:
             kwargs["task"] = "translate"
 
-        result = await asyncio.to_thread(model.transcribe, wav_path, **kwargs)
+        result = await asyncio.to_thread(get_model().transcribe, wav_path, **kwargs)
         text = (result.get("text") or "").strip()
 
         if not text:
