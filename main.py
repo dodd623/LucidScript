@@ -1,12 +1,14 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 import asyncio
 import tempfile, os, pathlib, uuid, re, subprocess, shlex, textwrap, html
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import whisper
 import easyocr
 import json
+from passlib.context import CryptContext
 from deep_translator import GoogleTranslator
 from docx import Document
 from datetime import datetime
@@ -14,6 +16,11 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 app = FastAPI()
+
+SECRET_KEY = os.getenv("SECRET_KEY", "lucidscript-dev-secret-change-me")
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 APP_VERSION = os.getenv("APP_VERSION", "0.3.1").strip()
 
@@ -24,11 +31,13 @@ if model_name not in allowed_models:
 
 model = None
 
+
 def get_model():
     global model
     if model is None:
         model = whisper.load_model(model_name)
     return model
+
 
 ocr_reader = None
 ocr_reader_ch = None
@@ -55,11 +64,23 @@ except FileNotFoundError:
     UI_TEMPLATE = None
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class DocumentRecord(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user_id = Column(Integer, nullable=True, index=True)
 
     mode = Column(String, nullable=False)
     original_filename = Column(String, nullable=True)
@@ -85,10 +106,12 @@ def save_document_record(
     translated: bool = False,
     error_message: str | None = None,
     notes: str | None = None,
+    user_id: int | None = None,
 ):
     db = SessionLocal()
     try:
         record = DocumentRecord(
+            user_id=user_id,
             mode=mode,
             original_filename=original_filename,
             output_filename=output_filename,
@@ -645,9 +668,12 @@ def build_security_report_doc(text: str):
     return out
 
 
-def build_multi_image_security_report_doc(file_results: List[dict]):
+def build_multi_image_ocr_doc(
+    file_results: List[dict],
+    title: str = "LucidScript OCR Extraction",
+):
     doc = Document()
-    doc.add_heading("Security Report", 0)
+    doc.add_heading(title, 0)
     doc.add_paragraph(datetime.now().strftime("%Y-%m-%d %H:%M"))
     doc.add_paragraph(f"Image count: {len(file_results)}")
 
@@ -667,7 +693,7 @@ def build_multi_image_security_report_doc(file_results: List[dict]):
         else:
             doc.add_paragraph("[No readable text detected]")
 
-    out = OUTPUT_DIR / f"image_transcript_{uuid.uuid4().hex[:8]}.docx"
+    out = OUTPUT_DIR / f"ocr_extraction_{uuid.uuid4().hex[:8]}.docx"
     doc.save(out.as_posix())
     return out
 
@@ -770,10 +796,37 @@ def extract_text_from_image(image_path: str) -> str:
 def translate_text_to_english(text: str) -> str:
     if not text.strip():
         return text
+
     try:
         return GoogleTranslator(source="auto", target="en").translate(text)
     except Exception:
         return text
+
+
+def translate_mixed_text_to_english(text: str) -> str:
+    """
+    Translates OCR text line-by-line so bilingual/trilingual images keep their structure.
+    English lines usually remain unchanged, while non-English lines are translated.
+    """
+    if not text.strip():
+        return text
+
+    translated_lines = []
+
+    for line in text.splitlines():
+        cleaned = line.strip()
+
+        if not cleaned:
+            translated_lines.append("")
+            continue
+
+        try:
+            translated = GoogleTranslator(source="auto", target="en").translate(cleaned)
+            translated_lines.append(translated or cleaned)
+        except Exception:
+            translated_lines.append(cleaned)
+
+    return "\n".join(translated_lines).strip()
 
 
 @app.post("/transcribe")
@@ -838,98 +891,103 @@ def format_docx(req: FormatRequest):
 #     )
 
 
-# @app.post("/export_security_report_from_image")
-# async def export_security_report_from_image(
-#     image_files: List[UploadFile] = File(...),
-#     translate_to_english: str | None = Form(None),
-# ):
-#     allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-#     translated_flag = (translate_to_english or "").lower() == "true"
+@app.post("/export_multi_image_ocr")
+async def export_multi_image_ocr(
+    image_files: List[UploadFile] = File(...),
+    translate_to_english: str | None = Form(None),
+):
+    allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    translated_flag = (translate_to_english or "").lower() == "true"
 
-#     if not image_files:
-#         raise HTTPException(
-#             status_code=400,
-#             detail="At least one image file is required.",
-#         )
+    if not image_files:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one image file is required.",
+        )
 
-#     tmp_paths: List[str] = []
-#     file_results: List[dict] = []
+    tmp_paths: List[str] = []
+    file_results: List[dict] = []
 
-#     try:
-#         for image_file in image_files:
-#             suffix = os.path.splitext(image_file.filename or "")[-1].lower()
+    try:
+        for image_file in image_files:
+            suffix = os.path.splitext(image_file.filename or "")[-1].lower()
 
-#             if suffix not in allowed:
-#                 raise HTTPException(
-#                     status_code=400,
-#                     detail=f"Unsupported image format for {image_file.filename or 'uploaded file'}. Use PNG, JPG, JPEG, WEBP, or BMP.",
-#                 )
+            if suffix not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported image format for {image_file.filename or 'uploaded file'}. Use PNG, JPG, JPEG, WEBP, or BMP.",
+                )
 
-#             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-#                 tmp.write(await image_file.read())
-#                 tmp_path = tmp.name
-#                 tmp_paths.append(tmp_path)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(await image_file.read())
+                tmp_path = tmp.name
+                tmp_paths.append(tmp_path)
 
-#             extracted_text = await asyncio.to_thread(extract_text_from_image, tmp_path)
-#             final_text = (
-#                 await asyncio.to_thread(translate_text_to_english, extracted_text)
-#                 if translated_flag
-#                 else extracted_text
-#             )
+            print(f"[OCR] Processing: {image_file.filename}")
+            extracted_text = await asyncio.to_thread(extract_text_from_image, tmp_path)
+            print(f"[OCR] Extracted ({image_file.filename}): {extracted_text[:100]}")
+            final_text = (
+              await asyncio.to_thread(translate_mixed_text_to_english, extracted_text)
+              if translated_flag
+              else extracted_text
+            )
 
-#             file_results.append(
-#                 {
-#                     "filename": image_file.filename or pathlib.Path(tmp_path).name,
-#                     "extracted_text": extracted_text,
-#                     "final_text": final_text,
-#                     "has_text": bool(extracted_text.strip()),
-#                 }
-#             )
+            file_results.append(
+                {
+                    "filename": image_file.filename or pathlib.Path(tmp_path).name,
+                    "extracted_text": extracted_text,
+                    "final_text": final_text,
+                    "has_text": bool(extracted_text.strip()),
+                }
+            )
 
-#         if not any(item["has_text"] for item in file_results):
-#             raise HTTPException(
-#                 status_code=400,
-#                 detail="No readable text was found in any of the uploaded images.",
-#             )
+        if not any(item["has_text"] for item in file_results):
+            print("[OCR] No readable text found in any images, continuing anyway.")
 
-#         out = await asyncio.to_thread(
-#             build_multi_image_security_report_doc, file_results
-#         )
+        out = await asyncio.to_thread(
+            build_multi_image_ocr_doc,
+            file_results,
+            "LucidScript OCR Extraction",
+        )
 
-#         save_document_record(
-#             mode="image",
-#             original_filename=", ".join(item["filename"] for item in file_results),
-#             output_filename=out.name,
-#             status="completed",
-#             translated=translated_flag,
-#             notes="Generated from multi-image OCR workflow.",
-#         )
+        save_document_record(
+            mode="image",
+            original_filename=", ".join(item["filename"] for item in file_results),
+            output_filename=out.name,
+            status="completed",
+            translated=translated_flag,
+            notes="Generated from generic multi-image OCR workflow.",
+        )
 
-#         return JSONResponse(
-#             {
-#                 "message": "Text transcript generated from images successfully.",
-#                 "docx_path": str(out),
-#                 "docx_filename": out.name,
-#                 "files": file_results,
-#                 "translated": translated_flag,
-#                 "image_count": len(file_results),
-#                 "version": APP_VERSION,
-#             }
-#         )
-#     except HTTPException:
-#         raise
-#     except Exception:
-#         raise HTTPException(
-#             status_code=500,
-#             detail="Something went wrong while reading the uploaded images. Please try clearer images.",
-#         )
-#     finally:
-#         for tmp_path in tmp_paths:
-#             try:
-#                 if tmp_path and os.path.exists(tmp_path):
-#                     os.remove(tmp_path)
-#             except Exception:
-#                 pass
+        return JSONResponse(
+            {
+                "message": "OCR extraction generated successfully.",
+                "docx_path": str(out),
+                "docx_filename": out.name,
+                "files": file_results,
+                "translated": translated_flag,
+                "image_count": len(file_results),
+                "version": APP_VERSION,
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+
+        print("[OCR] ERROR:")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"OCR route failed: {str(e)}",
+        )
+    finally:
+        for tmp_path in tmp_paths:
+            try:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 # @app.post("/export_witness_statement")
@@ -1481,21 +1539,30 @@ def upload_ui_async():
               <p>Upload one or more images, extract multilingual text, optionally translate it to English, and export a single combined .docx.</p>
 
               <form id="security-image-form">
-                <label for="image_files">Image files</label>
-                <input
-                  id="image_files"
-                  type="file"
-                  name="image_files"
-                  accept=".png,.jpg,.jpeg,.webp,.bmp,image/*"
-                  multiple
-                  required
-                />
+  <label for="image_files">Image files</label>
+  <input
+    id="image_files"
+    type="file"
+    name="image_files"
+    accept=".png,.jpg,.jpeg,.webp,.bmp,image/*"
+    multiple
+  />
 
-                <div class="stack" style="margin-top:12px">
-                  <input type="checkbox" id="translate_image_text" name="translate_to_english" value="true" />
-                  <label for="translate_image_text" style="margin:0;">Translate extracted text to English</label>
-                </div>
+  <div style="margin-top:10px; display:flex; gap:10px;">
+    <button type="button" id="add-image-btn">Add selected image(s)</button>
+    <button type="button" id="clear-image-btn">Clear list</button>
+  </div>
 
+  <div id="queued-image-list" class="preview-group" style="margin-top:12px;">
+    <div class="preview-group-title">Queued images</div>
+    <div id="queued-image-items" class="mono">No images added yet.</div>
+  </div>
+
+  <div class="stack" style="margin-top:12px">
+    <input type="checkbox" id="translate_image_text" name="translate_to_english" value="true" />
+    <label for="translate_image_text" style="margin:0;">Translate extracted text to English</label>
+  </div>
+  
                 <button id="image-submit-btn" type="submit">Extract & Export</button>
               </form>
 
@@ -1961,69 +2028,129 @@ function updateAudioSourceUI() {
           });
 
           const imageForm = document.getElementById('security-image-form');
-          imageForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            sharedStatusEl.className = 'status result-box';
-            sharedResultEl.innerHTML = '';
-            sharedStatusEl.textContent = 'Starting image job…';
+const imageFilesInput = document.getElementById('image_files');
+const addImageBtn = document.getElementById('add-image-btn');
+const clearImageBtn = document.getElementById('clear-image-btn');
+const queuedImageItems = document.getElementById('queued-image-items');
 
-            const fd = new FormData();
-            const filesInput = document.getElementById('image_files');
-            const selectedFiles = Array.from(filesInput.files || []);
+let queuedImages = [];
 
-            if (!selectedFiles.length) {
-              showError('Please choose at least one image.');
-              return;
-            }
+function renderQueuedImages() {
+  if (!queuedImages.length) {
+    queuedImageItems.textContent = 'No images added yet.';
+    return;
+  }
 
-            selectedFiles.forEach((file) => {
-              fd.append('image_files', file);
-            });
+  queuedImageItems.innerHTML = queuedImages
+    .map((file, index) => {
+      return `
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span>${escapeHtml(file.name)}</span>
+          <button type="button" onclick="removeQueuedImage(${index})">Remove</button>
+        </div>
+      `;
+    })
+    .join('');
+}
 
-            fd.set(
-              'translate_to_english',
-              document.getElementById('translate_image_text').checked ? 'true' : 'false'
-            );
+window.removeQueuedImage = function(index) {
+  queuedImages.splice(index, 1);
+  renderQueuedImages();
+};
 
-            try {
-              await sendWithProgress({
-                endpoint: '/export_security_report_from_image',
-                formData: fd,
-                wrap: imageProgressWrap,
-                fill: imageProgressFill,
-                label: imageProgressLabel,
-                stage: imageProgressStage,
-                percentEl: imageProgressPercent,
-                submitButton: imageSubmitBtn,
-                uploadLabel: 'Uploading image files…',
-                processingSteps: [
-                  { percent: 45, label: 'Upload complete', stage: 'Temporary images saved' },
-                  { percent: 62, label: 'Running OCR…', stage: 'Extracting text from uploaded images' },
-                  { percent: 78, label: 'Processing text…', stage: 'Applying translation / cleanup' },
-                  { percent: 92, label: 'Formatting document…', stage: 'Generating combined DOCX' },
-                  { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
-                ],
-                onSuccess: (data) => {
-                  showSuccess('Done – combined .docx is ready below.');
+addImageBtn.addEventListener('click', () => {
+  const selectedFiles = Array.from(imageFilesInput.files || []);
 
-                  const fname = data.docx_filename;
-                  const imageCount = data.image_count || 0;
+  if (!selectedFiles.length) {
+    showError('Choose at least one image to add.');
+    return;
+  }
 
-                  sharedResultEl.innerHTML = `
-                    <div class="mono">Images processed: ${escapeHtml(imageCount)} | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
-                    <div style="margin-top:8px">
-                      <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
-                    </div>
-                    <div class="hint" style="margin-top:12px;">Preview by filename:</div>
-                    ${renderImagePreviewGroups(data.files)}
-                  `;
-                },
-                onErrorMessage: 'Image OCR failed.'
-              });
-            } catch (err) {
-              showError(String(err || 'Image OCR failed.'));
-            }
-          });
+  selectedFiles.forEach((file) => {
+    const exists = queuedImages.some(
+      (f) => f.name === file.name && f.size === file.size
+    );
+    if (!exists) {
+      queuedImages.push(file);
+    }
+  });
+
+  imageFilesInput.value = '';
+  renderQueuedImages();
+});
+
+clearImageBtn.addEventListener('click', () => {
+  queuedImages = [];
+  imageFilesInput.value = '';
+  renderQueuedImages();
+});
+
+imageForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  sharedStatusEl.className = 'status result-box';
+  sharedResultEl.innerHTML = '';
+  sharedStatusEl.textContent = 'Starting image job…';
+
+  if (!queuedImages.length) {
+    showError('Please add at least one image.');
+    return;
+  }
+
+  const fd = new FormData();
+
+  queuedImages.forEach((file) => {
+    fd.append('image_files', file);
+  });
+
+  fd.set(
+    'translate_to_english',
+    document.getElementById('translate_image_text').checked ? 'true' : 'false'
+  );
+
+  try {
+    await sendWithProgress({
+      endpoint: '/export_multi_image_ocr',
+      formData: fd,
+      wrap: imageProgressWrap,
+      fill: imageProgressFill,
+      label: imageProgressLabel,
+      stage: imageProgressStage,
+      percentEl: imageProgressPercent,
+      submitButton: imageSubmitBtn,
+      uploadLabel: 'Uploading image files…',
+      processingSteps: [
+        { percent: 45, label: 'Upload complete', stage: 'Temporary images saved' },
+        { percent: 62, label: 'Running OCR…', stage: 'Extracting text from uploaded images' },
+        { percent: 78, label: 'Processing text…', stage: 'Applying translation / cleanup' },
+        { percent: 92, label: 'Formatting document…', stage: 'Generating combined DOCX' },
+        { percent: 97, label: 'Finalizing…', stage: 'Preparing download link' }
+      ],
+      onSuccess: (data) => {
+        showSuccess('Done – OCR document is ready below.');
+
+        const fname = data.docx_filename;
+        const imageCount = data.image_count || 0;
+
+        sharedResultEl.innerHTML = `
+          <div class="mono">Images processed: ${escapeHtml(imageCount)} | Version: ${escapeHtml(data.version || '__APP_VERSION__')}</div>
+          <div style="margin-top:8px">
+            <a href="/download/${encodeURIComponent(fname)}">⬇️ Download ${escapeHtml(fname)}</a>
+          </div>
+          <div class="hint" style="margin-top:12px;">Preview by filename:</div>
+          ${renderImagePreviewGroups(data.files)}
+        `;
+
+        queuedImages = [];
+        renderQueuedImages();
+      },
+      onErrorMessage: 'Multi-image OCR failed.'
+    });
+  } catch (err) {
+    showError(String(err || 'Image OCR failed.'));
+  }
+});
+
+renderQueuedImages();
 
           audioSourceSelect.addEventListener('change', updateAudioSourceUI);
 updateAudioSourceUI();
@@ -2170,9 +2297,13 @@ def download_youtube_audio(url: str) -> tuple[str, dict]:
 
         cmd = [
             "yt-dlp",
-            "-x",  # extract audio
+            "-f",
+            "bestaudio",
+            "--extract-audio",
             "--audio-format",
-            "wav",  # convert to wav (Whisper-friendly)
+            "wav",
+            "--audio-quality",
+            "0",
             "--no-playlist",
             "--print-json",
             "-o",
@@ -2180,16 +2311,17 @@ def download_youtube_audio(url: str) -> tuple[str, dict]:
             url,
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
-        # yt-dlp prints JSON metadata to stdout
+        if result.returncode != 0:
+            raise Exception(f"yt-dlp error:\n{result.stderr}")
+
         metadata = {}
         try:
             metadata = json.loads(result.stdout.splitlines()[-1])
         except Exception:
             pass
 
-        # Find actual downloaded file
         base = output_path.replace(".%(ext)s", "")
         for ext in [".wav", ".mp3", ".m4a"]:
             candidate = base + ext
