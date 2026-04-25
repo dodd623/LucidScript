@@ -8,6 +8,8 @@ from typing import List, Tuple, Optional
 import whisper
 import easyocr
 import json
+import cv2
+import numpy as np
 from passlib.context import CryptContext
 from deep_translator import GoogleTranslator
 from docx import Document
@@ -129,12 +131,40 @@ def save_document_record(
         db.close()
 
 
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_current_user(request: Request):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return None
+
+    db = SessionLocal()
+    try:
+        return db.query(User).filter(User.id == user_id).first()
+    finally:
+        db.close()
+
+
 @app.get("/documents")
-def list_documents():
+def list_documents(request: Request):
+    current_user = get_current_user(request)
+
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     db = SessionLocal()
     try:
         records = (
-            db.query(DocumentRecord).order_by(DocumentRecord.created_at.desc()).all()
+            db.query(DocumentRecord)
+            .filter(DocumentRecord.user_id == current_user.id)
+            .order_by(DocumentRecord.created_at.desc())
+            .all()
         )
         return [
             {
@@ -552,6 +582,111 @@ async def health_check():
     }
 
 
+@app.post("/register")
+async def register(
+    request: Request,
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    clean_username = username.strip()
+    clean_email = email.strip().lower()
+
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+    if not clean_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+    if len(password) < 6:
+        raise HTTPException(
+            status_code=400, detail="Password must be at least 6 characters."
+        )
+
+    db = SessionLocal()
+    try:
+        existing_user = (
+            db.query(User)
+            .filter((User.username == clean_username) | (User.email == clean_email))
+            .first()
+        )
+
+        if existing_user:
+            raise HTTPException(
+                status_code=400, detail="Username or email already exists."
+            )
+
+        user = User(
+            username=clean_username,
+            email=clean_email,
+            password_hash=hash_password(password),
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        request.session["user_id"] = user.id
+
+        return {
+            "message": "Registered successfully.",
+            "username": user.username,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/login")
+async def login(
+    request: Request,
+    username_or_email: str = Form(...),
+    password: str = Form(...),
+):
+    login_value = username_or_email.strip()
+    login_email = login_value.lower()
+
+    db = SessionLocal()
+    try:
+        user = (
+            db.query(User)
+            .filter((User.username == login_value) | (User.email == login_email))
+            .first()
+        )
+
+        if not user or not verify_password(password, user.password_hash):
+            raise HTTPException(
+                status_code=401, detail="Invalid username/email or password."
+            )
+
+        request.session["user_id"] = user.id
+
+        return {
+            "message": "Logged in successfully.",
+            "username": user.username,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return {"message": "Logged out successfully."}
+
+
+@app.get("/me")
+async def me(request: Request):
+    current_user = get_current_user(request)
+
+    if not current_user:
+        return {"authenticated": False}
+
+    return {
+        "authenticated": True,
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+    }
+
+
 @app.get("/test_youtube")
 def test_youtube(url: str):
     path, meta = download_youtube_audio(url)
@@ -757,38 +892,47 @@ def replace_placeholders_in_doc(doc: Document, replacements: dict):
 #     return out
 
 
+def preprocess_image(image_path: str) -> str:
+    img = cv2.imread(image_path)
+
+    if img is None:
+        return image_path
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.convertScaleAbs(gray, alpha=1.5, beta=0)
+
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
+    processed_path = image_path + "_processed.png"
+    cv2.imwrite(processed_path, thresh)
+
+    return processed_path
+
+
 def extract_text_from_image(image_path: str) -> str:
+    processed_path = preprocess_image(image_path)
     local_ocr_reader, local_ocr_reader_ch, local_ocr_reader_ja = get_ocr_readers()
 
-    try:
-        results = local_ocr_reader.readtext(image_path, detail=0, paragraph=True)
-        text = "\n".join(
-            [line.strip() for line in results if line and line.strip()]
-        ).strip()
-        if text:
-            return text
-    except Exception:
-        pass
+    readers = [local_ocr_reader, local_ocr_reader_ch, local_ocr_reader_ja]
 
-    try:
-        results_ch = local_ocr_reader_ch.readtext(image_path, detail=0, paragraph=True)
-        text_ch = "\n".join(
-            [line.strip() for line in results_ch if line and line.strip()]
-        ).strip()
-        if text_ch:
-            return text_ch
-    except Exception:
-        pass
+    for reader in readers:
+        try:
+            results = reader.readtext(
+                processed_path,
+                detail=0,
+                paragraph=True,
+                contrast_ths=0.05,
+                adjust_contrast=0.7,
+            )
 
-    try:
-        results_ja = local_ocr_reader_ja.readtext(image_path, detail=0, paragraph=True)
-        text_ja = "\n".join(
-            [line.strip() for line in results_ja if line and line.strip()]
-        ).strip()
-        if text_ja:
-            return text_ja
-    except Exception:
-        pass
+            text = "\n".join(
+                [line.strip() for line in results if line and line.strip()]
+            ).strip()
+
+            if text:
+                return text
+        except Exception:
+            continue
 
     return ""
 
@@ -893,6 +1037,7 @@ def format_docx(req: FormatRequest):
 
 @app.post("/export_multi_image_ocr")
 async def export_multi_image_ocr(
+    request: Request,
     image_files: List[UploadFile] = File(...),
     translate_to_english: str | None = Form(None),
 ):
@@ -927,9 +1072,9 @@ async def export_multi_image_ocr(
             extracted_text = await asyncio.to_thread(extract_text_from_image, tmp_path)
             print(f"[OCR] Extracted ({image_file.filename}): {extracted_text[:100]}")
             final_text = (
-              await asyncio.to_thread(translate_mixed_text_to_english, extracted_text)
-              if translated_flag
-              else extracted_text
+                await asyncio.to_thread(translate_mixed_text_to_english, extracted_text)
+                if translated_flag
+                else extracted_text
             )
 
             file_results.append(
@@ -942,13 +1087,20 @@ async def export_multi_image_ocr(
             )
 
         if not any(item["has_text"] for item in file_results):
-            print("[OCR] No readable text found in any images, continuing anyway.")
+            print("[OCR] WARNING: No text detected in any images")
+
+            for item in file_results:
+                item["final_text"] = (
+                    item.get("final_text") or "[No readable text detected]"
+                )
 
         out = await asyncio.to_thread(
             build_multi_image_ocr_doc,
             file_results,
             "LucidScript OCR Extraction",
         )
+
+        current_user = get_current_user(request)
 
         save_document_record(
             mode="image",
@@ -957,6 +1109,7 @@ async def export_multi_image_ocr(
             status="completed",
             translated=translated_flag,
             notes="Generated from generic multi-image OCR workflow.",
+            user_id=current_user.id if current_user else None,
         )
 
         return JSONResponse(
@@ -1030,7 +1183,7 @@ async def export_multi_image_ocr(
 
 
 @app.post("/export_docx_from_audio")
-async def export_docx_from_audio(file: UploadFile = File(...)):
+async def export_docx_from_audio(request: Request, file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename or "")[-1]
     tmp_path = None
     try:
@@ -2180,6 +2333,7 @@ def download_file(filename: str):
 
 @app.post("/export_docx_from_audio_v2")
 async def export_docx_from_audio_v2(
+    request: Request,
     file: UploadFile = File(...),
     language: str | None = Form(None),
     translate: str | None = Form(None),
@@ -2219,14 +2373,17 @@ async def export_docx_from_audio_v2(
             translated_flag,
         )
 
+        current_user = get_current_user(request)
+
         save_document_record(
-            mode="audio",
-            original_filename=file.filename,
-            output_filename=out.name,
-            status="completed",
-            language=lang,
-            translated=translated_flag,
-            notes="Generated from async audio route v2.",
+          mode="audio",
+          original_filename=file.filename,
+          output_filename=out.name,
+          status="completed",
+          language=lang,
+          translated=translated_flag,
+          notes="Generated from async audio route v2.",
+          user_id=current_user.id if current_user else None,
         )
 
         return JSONResponse(
@@ -2468,6 +2625,7 @@ def _make_deposition_doc(
 
 @app.post("/export_docx_from_audio_v3")
 async def export_docx_from_audio_v3(
+    request: Request,
     file: UploadFile = File(...),
     language: str | None = Form(None),
     translate: str | None = Form(None),
@@ -2512,14 +2670,17 @@ async def export_docx_from_audio_v3(
             labeled,
         )
 
+        current_user = get_current_user(request)
+
         save_document_record(
-            mode="audio",
-            original_filename=file.filename,
-            output_filename=out.name,
-            status="completed",
-            language=result.get("language", "unknown"),
-            translated=((translate or "").lower() == "true"),
-            notes="Generated from deposition audio route v3.",
+          mode="audio",
+          original_filename=file.filename,
+          output_filename=out.name,
+          status="completed",
+          language=result.get("language", "unknown"),
+          translated=((translate or "").lower() == "true"),
+          notes="Generated from deposition audio route v3.",
+          user_id=current_user.id if current_user else None,
         )
 
         return JSONResponse(
