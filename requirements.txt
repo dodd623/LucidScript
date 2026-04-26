@@ -10,3 +10,4 @@ Pillow
 deep-translator
 sqlalchemy
 itsdangerous
+passlib[bcrypt]
