@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Redirect
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 import asyncio
+import hashlib
 import tempfile, os, pathlib, uuid, re, subprocess, shlex, textwrap, html
 from typing import List, Tuple, Optional
 import whisper
@@ -132,11 +133,13 @@ def save_document_record(
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    hashed = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return pwd_context.hash(hashed)
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(password: str, hashed: str) -> bool:
+    prehashed = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return pwd_context.verify(prehashed, hashed)
 
 
 def get_current_user(request: Request):
@@ -309,6 +312,7 @@ def landing_page_html() -> str:
             padding: 28px;
             text-align: left;
             margin-top: 18px;
+            margin-bottom: 28px;
             box-shadow: var(--shadow);
           }}
 
@@ -405,7 +409,10 @@ def landing_page_html() -> str:
           <div class="version">Version {html.escape(APP_VERSION)} • Whisper model: {html.escape(model_name)}</div>
 
           <div class="hero-actions">
-            <a href="/ui_async" class="button">Open LucidScript UI</a>
+            <a href="/auth" class="button">Get Started</a>
+            <div style="margin-top:10px;">
+              <a href="/guest" style="font-size:20px; color: white;">Continue as guest</a>
+            </div>
           </div>
 
           <div class="card">
@@ -625,6 +632,7 @@ async def register(
         db.refresh(user)
 
         request.session["user_id"] = user.id
+        request.session.pop("guest_mode", None)
 
         return {
             "message": "Registered successfully.",
@@ -657,6 +665,7 @@ async def login(
             )
 
         request.session["user_id"] = user.id
+        request.session.pop("guest_mode", None)
 
         return {
             "message": "Logged in successfully.",
@@ -698,6 +707,306 @@ def test_youtube(url: str):
     }
 
 
+@app.get("/auth", response_class=HTMLResponse)
+def auth_page():
+    return """
+    <html data-theme="dark">
+      <head>
+        <title>LucidScript — Account</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          :root {
+            --bg: #0f1115;
+            --text: #eaeef3;
+            --muted: rgba(234, 238, 243, 0.78);
+            --card: #171a21;
+            --border: #232736;
+            --input-bg: #0f1115;
+            --button: #4c83ff;
+            --button-hover: #3a6ef6;
+            --error: #ff8a8a;
+            --success: #71eea0;
+          }
+
+          * { box-sizing: border-box; }
+
+          body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+          }
+
+          .auth-wrap {
+            width: min(440px, 100%);
+          }
+
+          .brand {
+            text-align: center;
+            margin-bottom: 24px;
+          }
+
+          .brand h1 {
+            margin: 0 0 8px 0;
+            font-size: 2.2rem;
+          }
+
+          .brand p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.5;
+          }
+
+          .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 28px;
+          }
+
+          h2 {
+            margin-top: 0;
+            margin-bottom: 8px;
+          }
+
+          .hint {
+            color: var(--muted);
+            font-size: 14px;
+            margin-bottom: 18px;
+          }
+
+          label {
+            display: block;
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 6px;
+          }
+
+          input {
+            width: 100%;
+            background: var(--input-bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 14px;
+          }
+
+          button {
+            width: 100%;
+            border: 0;
+            border-radius: 10px;
+            padding: 12px 16px;
+            background: var(--button);
+            color: white;
+            font-weight: 700;
+            cursor: pointer;
+          }
+
+          button:hover {
+            background: var(--button-hover);
+          }
+
+          .switch {
+            margin-top: 18px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 14px;
+          }
+
+          .switch button {
+            width: auto;
+            background: transparent;
+            color: #8fb2ff;
+            padding: 0;
+            font-weight: 700;
+          }
+
+          .status {
+            margin-top: 14px;
+            font-size: 14px;
+          }
+
+          .error { color: var(--error); }
+          .success { color: var(--success); }
+
+          .hidden {
+            display: none;
+          }
+
+          a {
+            color: #8fb2ff;
+            text-decoration: none;
+          }
+
+          .back {
+            text-align: center;
+            margin-top: 18px;
+            font-size: 14px;
+          }
+        </style>
+      </head>
+
+      <body>
+        <div class="auth-wrap">
+          <div class="brand">
+            <h1>LucidScript</h1>
+            <p>Sign in to access your saved documents and transcription workspace.</p>
+          </div>
+
+          <div class="card">
+            <div id="register-panel">
+              <h2>Create your account</h2>
+              <div class="hint">Use any personal or company email.</div>
+
+              <form id="register-form">
+                <label for="register-username">Display name</label>
+                <input id="register-username" name="username" type="text" required />
+
+                <label for="register-email">Email</label>
+                <input id="register-email" name="email" type="email" required />
+
+                <label for="register-password">Password</label>
+                <input id="register-password" name="password" type="password" required />
+
+                <button type="submit">Create Account</button>
+              </form>
+
+              <div class="switch">
+                Already have an account?
+                <button type="button" id="show-login-btn">Log in</button>
+              </div>
+            </div>
+
+            <div id="login-panel" class="hidden">
+              <h2>Welcome back</h2>
+              <div class="hint">Log in with your email and password.</div>
+
+              <form id="login-form">
+                <label for="login-username">Email</label>
+                <input id="login-username" name="username_or_email" type="email" required />
+
+                <label for="login-password">Password</label>
+                <input id="login-password" name="password" type="password" required />
+
+                <button type="submit">Log In</button>
+              </form>
+
+              <div class="switch">
+                New to LucidScript?
+                <button type="button" id="show-register-btn">Create an account</button>
+              </div>
+            </div>
+
+            <div id="auth-message" class="status"></div>
+          </div>
+
+          <div class="back">
+            <a href="/">← Back to landing page</a>
+          </div>
+        </div>
+
+        <script>
+          const registerPanel = document.getElementById("register-panel");
+          const loginPanel = document.getElementById("login-panel");
+          const showLoginBtn = document.getElementById("show-login-btn");
+          const showRegisterBtn = document.getElementById("show-register-btn");
+          const registerForm = document.getElementById("register-form");
+          const loginForm = document.getElementById("login-form");
+          const authMessage = document.getElementById("auth-message");
+
+          function showRegister() {
+            registerPanel.classList.remove("hidden");
+            loginPanel.classList.add("hidden");
+            authMessage.textContent = "";
+            authMessage.className = "status";
+          }
+
+          function showLogin() {
+            loginPanel.classList.remove("hidden");
+            registerPanel.classList.add("hidden");
+            authMessage.textContent = "";
+            authMessage.className = "status";
+          }
+
+          function showError(message) {
+            authMessage.className = "status error";
+            authMessage.textContent = message;
+          }
+
+          function showSuccess(message) {
+            authMessage.className = "status success";
+            authMessage.textContent = message;
+          }
+
+          showLoginBtn.addEventListener("click", showLogin);
+          showRegisterBtn.addEventListener("click", showRegister);
+
+          registerForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const fd = new FormData(registerForm);
+
+            try {
+              const resp = await fetch("/register", {
+                method: "POST",
+                body: fd
+              });
+
+              let data = {};
+              try {
+                data = await resp.json();
+              } catch (err) {
+                data = { detail: "Server returned a non-JSON error. Check the terminal." };
+              }
+
+              if (!resp.ok) {
+                showError(data.detail || "Registration failed.");
+                return;
+              }
+
+              showSuccess("Account created. Opening LucidScript...");
+              window.location.href = "/ui_async";
+            } catch (err) {
+              showError("Registration failed.");
+            }
+          });
+
+          loginForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const fd = new FormData(loginForm);
+
+            try {
+              const resp = await fetch("/login", {
+                method: "POST",
+                body: fd
+              });
+
+              const data = await resp.json();
+
+              if (!resp.ok) {
+                showError(data.detail || "Login failed.");
+                return;
+              }
+
+              showSuccess("Logged in. Opening LucidScript...");
+              window.location.href = "/ui_async";
+            } catch (err) {
+              showError("Login failed.");
+            }
+          });
+        </script>
+      </body>
+    </html>
+    """
+
+
 @app.get("/ui", response_class=HTMLResponse)
 def upload_ui():
     return """
@@ -715,7 +1024,7 @@ def upload_ui():
           .card { background:#171a21; border:1px solid #232736; border-radius:14px; padding:24px; }
           input[type=file] { width:100%; background:#0f1115; color:#eaeef3; border:1px dashed #2a3042;
                              padding:14px; border-radius:10px; }
-          button { margin-top:14px; width:100%; padding:12px 16px; border:0; border-radius:10px;
+          button { margin-top:14px; width:auto; min-width:140px; padding:12px 16px; border:0; border-radius:10px;
                    background:#4c83ff; color:white; font-weight:600; cursor:pointer; }
           button:hover { background:#3a6ef6; }
           small { display:block; margin-top:10px; opacity:.65; }
@@ -1211,6 +1520,8 @@ async def export_docx_from_audio(request: Request, file: UploadFile = File(...))
             language,
         )
 
+        current_user = get_current_user(request)
+
         save_document_record(
             mode="audio",
             original_filename=file.filename,
@@ -1219,6 +1530,7 @@ async def export_docx_from_audio(request: Request, file: UploadFile = File(...))
             language=language,
             translated=False,
             notes="Generated from basic audio transcription route.",
+            user_id=current_user.id if current_user else None,
         )
 
         return {
@@ -1242,8 +1554,24 @@ async def export_docx_from_audio(request: Request, file: UploadFile = File(...))
             pass
 
 
+@app.get("/guest")
+def guest_ui(request: Request):
+    request.session["guest_mode"] = True
+    return RedirectResponse(url="/ui_async", status_code=302)
+
+
 @app.get("/ui_async", response_class=HTMLResponse)
-def upload_ui_async():
+def ui_async(request: Request):
+    current_user = get_current_user(request)
+    is_guest = request.session.get("guest_mode", False)
+
+    if not current_user and not is_guest:
+        return RedirectResponse(url="/auth", status_code=302)
+
+    user_label = "Guest Mode"
+    if current_user:
+        user_label = f"Signed in as {html.escape(current_user.username)}"
+
     page = """
     <html data-theme="dark">
       <head>
@@ -1306,7 +1634,32 @@ def upload_ui_async():
           .topbar {
             display: flex;
             justify-content: flex-end;
+            align-items: center;
+            gap: 10px;
             margin-bottom: 14px;
+          }
+
+          .user-indicator {
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--muted-soft);
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 13px;
+          }
+
+          .logout-button {
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text);
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 13px;
+            min-width: auto;
+          }
+
+          .logout-button:hover {
+            background: var(--card);
           }
 
           .theme-toggle {
@@ -1423,7 +1776,8 @@ def upload_ui_async():
 
           button {
             margin-top: 14px;
-            width: 100%;
+            width:auto; 
+            min-width:140px;
             padding: 12px 16px;
             border: 0;
             border-radius: 10px;
@@ -1566,21 +1920,16 @@ def upload_ui_async():
       <body>
         <div class="wrap">
           <div class="topbar">
+            <div id="user-indicator" class="user-indicator">__USER_LABEL__</div>
             <button class="theme-toggle" id="theme-toggle" type="button">Toggle theme</button>
+            <button class="logout-button" id="app-logout-btn" type="button">Logout</button>
           </div>
 
           <h1>LucidScript</h1>
           <div class="version">Version __APP_VERSION__ • Whisper model: __MODEL_NAME__</div>
           <p>Choose a mode, then process audio, pasted text, or image text into a formatted .docx.</p>
           <div class="card">
-            <div class="mode-row">
-              <label for="mode">Mode</label>
-              <select id="mode">
-                <option value="audio">Audio Transcription</option>
-                <option value="text">Text Input</option>
-                <option value="image">Image Upload</option>
-              </select>
-            </div>
+          <div class="mode-row">
 
             <div id="mode-audio">
               <h2>Audio Transcription</h2>
@@ -1762,6 +2111,12 @@ def upload_ui_async():
 
             <div id="shared-status" class="status result-box"></div>
             <div id="shared-result" class="result-box"></div>
+            
+            <div class="card" style="margin-top:20px">
+              <h2>My Documents</h2>
+              <button id="load-docs-btn">Load My Documents</button>
+              <div id="documents-list" style="margin-top:15px"></div>
+            </div>
 
             <small>Prefer the API? See <a href="/docs">/docs</a>.</small>
           </div>
@@ -1825,9 +2180,11 @@ def upload_ui_async():
   sharedResultEl.innerHTML = '';
 }
 
-          modeSelect.addEventListener('change', (e) => {
-            setMode(e.target.value);
-          });
+          if (modeSelect) {
+            modeSelect.addEventListener('change', (e) => {
+              setMode(e.target.value);
+            });
+          }
 
           function escapeHtml(value) {
             return String(value)
@@ -2308,12 +2665,80 @@ renderQueuedImages();
           audioSourceSelect.addEventListener('change', updateAudioSourceUI);
 updateAudioSourceUI();
 setMode('audio');
+
+const userIndicator = document.getElementById("user-indicator");
+const appLogoutBtn = document.getElementById("app-logout-btn");
+
+async function loadCurrentUser() {
+  try {
+    const resp = await fetch("/me");
+    const data = await resp.json();
+
+    if (data.authenticated) {
+  userIndicator.textContent = `Signed in as ${data.username}`;
+} else {
+  userIndicator.textContent = "Guest Mode";
+}
+    }
+  } catch (err) {
+      console.error("Failed to load current user:", err);
+      userIndicator.textContent = "Could not load user";
+    }
+}
+
+appLogoutBtn.addEventListener("click", async () => {
+  await fetch("/logout", {
+    method: "POST"
+  });
+
+  window.location.href = "/auth";
+});
+
+loadCurrentUser();
+
+const loadDocsBtn = document.getElementById("load-docs-btn");
+const documentsList = document.getElementById("documents-list");
+
+loadDocsBtn.addEventListener("click", async () => {
+  documentsList.innerHTML = "Loading...";
+
+  try {
+    const resp = await fetch("/documents");
+    const data = await resp.json();
+
+    if (!resp.ok) {
+  documentsList.innerHTML = `<p style='color:red;'>${escapeHtml(data.detail || "Failed to load documents.")}</p>`;
+  return;
+}
+
+if (!Array.isArray(data) || data.length === 0) {
+  documentsList.innerHTML = "<p>No documents found.</p>";
+  return;
+}
+
+    documentsList.innerHTML = data.map(doc => {
+      return `
+        <div style="margin-bottom:12px; padding:10px; border:1px solid #444; border-radius:8px;">
+          <div><strong>${doc.mode.toUpperCase()}</strong></div>
+          <div>${doc.output_filename}</div>
+          <div style="font-size:12px; opacity:0.7;">${doc.created_at}</div>
+          <a href="/download/${encodeURIComponent(doc.output_filename)}">Download</a>
+        </div>
+      `;
+    }).join("");
+
+  } catch (err) {
+    documentsList.innerHTML = "<p style='color:red;'>Failed to load documents.</p>";
+  }
+});
         </script>
       </body>
     </html>
     """
-    return page.replace("__APP_VERSION__", html.escape(APP_VERSION)).replace(
-        "__MODEL_NAME__", html.escape(model_name)
+    return (
+        page.replace("__APP_VERSION__", html.escape(APP_VERSION))
+        .replace("__MODEL_NAME__", html.escape(model_name))
+        .replace("__USER_LABEL__", user_label)
     )
 
 
@@ -2376,14 +2801,14 @@ async def export_docx_from_audio_v2(
         current_user = get_current_user(request)
 
         save_document_record(
-          mode="audio",
-          original_filename=file.filename,
-          output_filename=out.name,
-          status="completed",
-          language=lang,
-          translated=translated_flag,
-          notes="Generated from async audio route v2.",
-          user_id=current_user.id if current_user else None,
+            mode="audio",
+            original_filename=file.filename,
+            output_filename=out.name,
+            status="completed",
+            language=lang,
+            translated=translated_flag,
+            notes="Generated from async audio route v2.",
+            user_id=current_user.id if current_user else None,
         )
 
         return JSONResponse(
@@ -2673,14 +3098,14 @@ async def export_docx_from_audio_v3(
         current_user = get_current_user(request)
 
         save_document_record(
-          mode="audio",
-          original_filename=file.filename,
-          output_filename=out.name,
-          status="completed",
-          language=result.get("language", "unknown"),
-          translated=((translate or "").lower() == "true"),
-          notes="Generated from deposition audio route v3.",
-          user_id=current_user.id if current_user else None,
+            mode="audio",
+            original_filename=file.filename,
+            output_filename=out.name,
+            status="completed",
+            language=result.get("language", "unknown"),
+            translated=((translate or "").lower() == "true"),
+            notes="Generated from deposition audio route v3.",
+            user_id=current_user.id if current_user else None,
         )
 
         return JSONResponse(
