@@ -9,3 +9,4 @@ easyocr
 Pillow
 deep-translator
 sqlalchemy
+itsdangerous
