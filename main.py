@@ -181,6 +181,7 @@ def list_documents(request: Request):
                 "translated": r.translated,
                 "error_message": r.error_message,
                 "notes": r.notes,
+                "author": current_user.username,
             }
             for r in records
         ]
@@ -2114,6 +2115,15 @@ def ui_async(request: Request):
             
             <div class="card" style="margin-top:20px">
               <h2>My Documents</h2>
+              <p id="docs-helper" style="opacity:0.75;">Load documents saved to your account.</p>
+
+              <input
+                id="author-search"
+                type="text"
+                placeholder="Search by author..."
+                style="margin-bottom:10px;"
+              />
+
               <button id="load-docs-btn">Load My Documents</button>
               <div id="documents-list" style="margin-top:15px"></div>
             </div>
@@ -2675,15 +2685,14 @@ async function loadCurrentUser() {
     const data = await resp.json();
 
     if (data.authenticated) {
-  userIndicator.textContent = `Signed in as ${data.username}`;
-} else {
-  userIndicator.textContent = "Guest Mode";
-}
+      userIndicator.textContent = `Signed in as ${data.username}`;
+    } else {
+      userIndicator.textContent = "Guest Mode";
     }
   } catch (err) {
-      console.error("Failed to load current user:", err);
-      userIndicator.textContent = "Could not load user";
-    }
+    console.error("Failed to load current user:", err);
+    userIndicator.textContent = "Could not load user";
+  }
 }
 
 appLogoutBtn.addEventListener("click", async () => {
@@ -2698,8 +2707,30 @@ loadCurrentUser();
 
 const loadDocsBtn = document.getElementById("load-docs-btn");
 const documentsList = document.getElementById("documents-list");
+const docsHelper = document.getElementById("docs-helper");
+const authorSearch = document.getElementById("author-search");
 
-loadDocsBtn.addEventListener("click", async () => {
+let loadedDocuments = [];
+
+async function setupDocumentsArea() {
+  try {
+    const resp = await fetch("/me");
+    const data = await resp.json();
+
+    if (!data.authenticated) {
+      docsHelper.textContent = "Create an account or log in to save and view your documents.";
+      loadDocsBtn.disabled = true;
+      loadDocsBtn.textContent = "Login Required";
+    }
+  } catch (err) {
+    docsHelper.textContent = "Could not check document access.";
+    loadDocsBtn.disabled = true;
+  }
+}
+
+setupDocumentsArea();
+
+async function loadDocuments() {
   documentsList.innerHTML = "Loading...";
 
   try {
@@ -2707,29 +2738,56 @@ loadDocsBtn.addEventListener("click", async () => {
     const data = await resp.json();
 
     if (!resp.ok) {
-  documentsList.innerHTML = `<p style='color:red;'>${escapeHtml(data.detail || "Failed to load documents.")}</p>`;
-  return;
-}
+      documentsList.innerHTML = `<p style='color:red;'>${escapeHtml(data.detail || "Failed to load documents.")}</p>`;
+      return;
+    }
 
-if (!Array.isArray(data) || data.length === 0) {
-  documentsList.innerHTML = "<p>No documents found.</p>";
-  return;
-}
+    if (!Array.isArray(data) || data.length === 0) {
+      documentsList.innerHTML = "<p>No documents found.</p>";
+      return;
+    }
 
-    documentsList.innerHTML = data.map(doc => {
-      return `
-        <div style="margin-bottom:12px; padding:10px; border:1px solid #444; border-radius:8px;">
-          <div><strong>${doc.mode.toUpperCase()}</strong></div>
-          <div>${doc.output_filename}</div>
-          <div style="font-size:12px; opacity:0.7;">${doc.created_at}</div>
-          <a href="/download/${encodeURIComponent(doc.output_filename)}">Download</a>
-        </div>
-      `;
-    }).join("");
+    loadedDocuments = data;
+    renderDocuments(loadedDocuments);
 
   } catch (err) {
     documentsList.innerHTML = "<p style='color:red;'>Failed to load documents.</p>";
   }
+}
+
+function renderDocuments(docs) {
+  if (!docs.length) {
+    documentsList.innerHTML = "<p>No matching documents.</p>";
+    return;
+  }
+
+  documentsList.innerHTML = docs.map(doc => {
+    const created = doc.created_at
+      ? new Date(doc.created_at).toLocaleString()
+      : "Unknown date";
+
+    return `
+      <div style="margin-bottom:12px; padding:10px; border:1px solid #444; border-radius:8px;">
+        <div><strong>${escapeHtml(String(doc.mode || "document").toUpperCase())}</strong></div>
+        <div>${escapeHtml(doc.output_filename || "Untitled document")}</div>
+        <div style="font-size:12px; opacity:0.7;">${escapeHtml(created)}</div>
+        <div style="font-size:12px; opacity:0.7;">Author: ${escapeHtml(doc.author || "Unknown")}</div>
+        <a href="/download/${encodeURIComponent(doc.output_filename)}">Download</a>
+      </div>
+    `;
+  }).join("");
+}
+
+loadDocsBtn.addEventListener("click", loadDocuments);
+
+authorSearch.addEventListener("input", () => {
+  const query = authorSearch.value.toLowerCase();
+
+  const filtered = loadedDocuments.filter(doc =>
+    (doc.author || "").toLowerCase().includes(query)
+  );
+
+  renderDocuments(filtered);
 });
         </script>
       </body>
