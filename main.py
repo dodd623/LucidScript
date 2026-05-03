@@ -1071,11 +1071,65 @@ def to_paragraphs(text: str):
     return [p.strip() for p in parts if p.strip()]
 
 
+def format_timestamp(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes = seconds // 60
+    secs = seconds % 60
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def build_pause_aware_blocks(
+    segments: list[dict], pause_threshold: float = 3.0
+) -> list[dict]:
+    blocks = []
+    current_block = []
+    current_start = None
+    previous_end = None
+    MAX_CHARS_PER_BLOCK = 500
+
+    for segment in segments:
+        text = (segment.get("text") or "").strip()
+        if not text:
+            continue
+
+        start = float(segment.get("start", 0.0))
+        end = float(segment.get("end", start))
+
+        if current_start is None:
+            current_start = start
+
+        if previous_end is not None:
+            pause = start - previous_end
+            current_text = " ".join(current_block)
+
+            if (
+                pause >= pause_threshold or len(current_text) >= MAX_CHARS_PER_BLOCK
+            ) and current_block:
+                blocks.append({"start": current_start, "text": current_text.strip()})
+                current_block = []
+                current_start = start
+
+        current_block.append(text)
+        previous_end = end
+
+    if current_block:
+        blocks.append(
+            {
+                "start": current_start if current_start is not None else 0.0,
+                "text": " ".join(current_block).strip(),
+            }
+        )
+
+    return blocks
+
+
 def build_transcript_doc(
     title: str,
     text: str,
     language: str | None = None,
     translated: bool = False,
+    segments: list[dict] | None = None,
+    pause_threshold: float = 3.0,
 ):
     doc = Document()
     doc.add_heading(title, 0)
@@ -1088,8 +1142,17 @@ def build_transcript_doc(
 
     doc.add_paragraph(meta)
 
-    for p in to_paragraphs(text):
-        doc.add_paragraph(p)
+    if segments:
+        blocks = build_pause_aware_blocks(segments, pause_threshold=pause_threshold)
+
+        for block in blocks:
+            timestamp = format_timestamp(block["start"])
+            p = doc.add_paragraph()
+            p.add_run(f"[{timestamp}] ").bold = True
+            p.add_run(block["text"])
+    else:
+        for p in to_paragraphs(text):
+            doc.add_paragraph(p)
 
     out = OUTPUT_DIR / f"lucidscript_{uuid.uuid4().hex[:8]}.docx"
     doc.save(out.as_posix())
@@ -2854,6 +2917,7 @@ async def export_docx_from_audio_v2(
             text,
             lang,
             translated_flag,
+            result.get("segments", []),
         )
 
         current_user = get_current_user(request)
@@ -2982,6 +3046,7 @@ async def process_audio_file_to_docx(
     language: str | None = None,
     translate: bool = False,
     notes: str | None = None,
+    user_id: int | None = None,
 ):
     kwargs = {}
     if language:
@@ -3009,6 +3074,7 @@ async def process_audio_file_to_docx(
         text,
         detected_language,
         translate,
+        result.get("segments", []),
     )
 
     save_document_record(
@@ -3019,6 +3085,7 @@ async def process_audio_file_to_docx(
         language=detected_language,
         translated=translate,
         notes=notes or "Generated from shared audio processing helper.",
+        user_id=user_id,
     )
 
     return {
@@ -3203,6 +3270,7 @@ async def export_docx_from_audio_v3(
 
 @app.post("/export_docx_from_youtube_v2")
 async def export_docx_from_youtube_v2(
+    request: Request,
     youtube_url: str = Form(...),
     language: str | None = Form(None),
     translate: bool = Form(False),
@@ -3214,6 +3282,8 @@ async def export_docx_from_youtube_v2(
         audio_path, metadata = download_youtube_audio(youtube_url)
         title = metadata.get("title") or "youtube_audio"
 
+        current_user = get_current_user(request)
+
         # Process
         result = await process_audio_file_to_docx(
             audio_path=audio_path,
@@ -3221,6 +3291,7 @@ async def export_docx_from_youtube_v2(
             language=language,
             translate=translate,
             notes=f"YouTube source: {youtube_url}",
+            user_id=current_user.id if current_user else None,
         )
 
         return result
