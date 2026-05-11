@@ -1,83 +1,96 @@
 # LucidScript
 
-## Introduction
-LucidScript is a document-generation web application that converts raw inputs into structured, downloadable Word documents. It supports audio transcription, image-based text extraction (OCR), formatted report generation, and witness statement creation in a single interface.
+## Development Status
+**Current Stage:** Beta
 
-The goal of LucidScript is to reduce manual documentation work. Instead of copying information from recordings, screenshots, or notes into a report, users can upload or paste their content and generate a clean `.docx` file automatically.
+LucidScript is currently in beta development and preparing for broader user testing during the upcoming Software Integration phase.
 
-This is especially useful for workflows where documentation is repetitive, time-sensitive, or requires consistent formatting.
+The application has moved beyond early proof-of-concept functionality and now includes persistent user accounts, saved document history, OCR processing, YouTube/audio transcription workflows, timestamp segmentation improvements, and document retrieval/search functionality.
 
----
-
-## Alpha Features
-The current alpha version of LucidScript includes:
-
-- Audio transcription using Whisper
-- Standard transcript export to `.docx`
-- Deposition-style transcripts with optional speaker detection
-- Image OCR with multilingual support
-- Multi-image upload with combined document output
-- Optional translation of extracted or transcribed text
-- Text input → formatted report generation
-- Witness statement generator using a template
-- Document history logging with SQLite
-- Async UI with progress bars and light/dark mode
-
-### AI Component
-LucidScript includes multiple AI-driven components:
-
-- **Whisper (OpenAI)**  
-  Used for speech-to-text transcription and optional translation
-
-- **EasyOCR**  
-  Used for extracting text from images in multiple languages
-
-- **pyannote.audio (optional)**  
-  Used for speaker diarization in deposition transcripts
-
-These are core to the app and not just add-ons.
+Current development is focused on improving usability, transcript formatting consistency, workflow refinement, and overall platform stability before larger-scale testing begins.
 
 ---
 
-## Technologies
+# Current Features
 
-### Backend
+## Audio & Video Transcription
+- Upload audio/video files for transcription
+- YouTube URL transcription support
+- Whisper AI transcription integration
+- Automatic language detection
+- Optional translation to English
+- DOCX export generation
+
+## OCR Processing
+- Image-to-text extraction
+- Multi-image OCR support
+- Structured document formatting
+
+## User Accounts & Persistence
+- User login system
+- Persistent document history
+- Downloadable saved transcripts
+- Local document storage system
+
+## Transcript Formatting
+- Pause-aware timestamp segmentation
+- Deposition-style formatting options
+- Smaller readable transcript chunks
+- Adaptive fallback splitting for continuous speech
+
+## User Interface
+- Dark/light mode toggle
+- Progress tracking UI
+- Live document filtering/search
+- Responsive document history layout
+
+---
+
+# Planned Features for This Month
+
+The following features and improvements are planned before Software Integration testing begins:
+
+## Workflow & User Experience
+- Improved upload validation and error handling
+- Better transcript formatting consistency
+- Expanded search and document organization
+- UI polish and responsiveness improvements
+
+## Processing Improvements
+- Additional testing for long-form transcription
+- Improved timestamp placement edge-case handling
+- Better handling of continuous speech with minimal pauses
+- Expanded OCR testing and formatting refinement
+
+## User Management
+- More advanced document management tools
+- Improved account/session handling
+- Preparation for multi-user testing workflows
+
+## Stability & Optimization
+- Memory usage optimization
+- Background processing improvements
+- Performance tuning for larger uploads
+- Additional logging/debugging systems
+
+---
+
+# Tech Stack
+
 - Python
 - FastAPI
-- SQLAlchemy
+- Whisper AI
+- HTML/CSS/JavaScript
 - SQLite
-
-### AI / Processing
-- Whisper
-- EasyOCR
-- pyannote.audio (optional)
-- deep-translator
-
-### Document Generation
-- python-docx
-
-### Frontend
-- HTML / CSS / JavaScript (embedded UI)
-
-### Deployment
-- Fly.io
+- OCR Libraries
+- DOCX Export Utilities
+- SQLAlchemy
+- Fly.io Deployment
 
 ---
 
-## Installation
+# Goal
 
-### Prerequisites
-Make sure you have:
+The goal of LucidScript is to provide a streamlined transcription and OCR workflow for users who need structured, readable, exportable documentation from audio, video, and image sources.
 
-- Python 3.10+
-- pip
-- ffmpeg (required for audio + diarization)
-- Git
-
----
-
-### Setup
-
-```bash
-git clone https://github.com/dodd623/LucidScript.git
-cd LucidScript
+The project is specifically being designed with long-form transcription usability and professional formatting workflows in mind.
