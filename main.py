@@ -133,13 +133,11 @@ def save_document_record(
 
 
 def hash_password(password: str) -> str:
-    hashed = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return pwd_context.hash(hashed)
+    return pwd_context.hash(password)
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    prehashed = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return pwd_context.verify(prehashed, hashed)
+    return pwd_context.verify(password, hashed)
 
 
 def get_current_user(request: Request):
@@ -1078,6 +1076,35 @@ def format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def split_at_sentence_boundary(text: str, max_chars: int) -> tuple[str, str]:
+    """
+    Splits text near max_chars without cutting directly in the middle of a sentence
+    when a sentence boundary is available.
+    """
+    cleaned = text.strip()
+
+    if len(cleaned) <= max_chars:
+        return cleaned, ""
+
+    split_index = -1
+
+    for marker in [". ", "! ", "? "]:
+        found = cleaned.rfind(marker, 0, max_chars)
+        if found > split_index:
+            split_index = found + 1
+
+    if split_index == -1:
+        split_index = cleaned.rfind(" ", 0, max_chars)
+
+    if split_index == -1:
+        split_index = max_chars
+
+    first_part = cleaned[:split_index].strip()
+    remaining = cleaned[split_index:].strip()
+
+    return first_part, remaining
+
+
 def build_pause_aware_blocks(
     segments: list[dict], pause_threshold: float = 3.0
 ) -> list[dict]:
@@ -1100,13 +1127,23 @@ def build_pause_aware_blocks(
 
         if previous_end is not None:
             pause = start - previous_end
-            current_text = " ".join(current_block)
+            current_text = " ".join(current_block).strip()
 
-            if (
-                pause >= pause_threshold or len(current_text) >= MAX_CHARS_PER_BLOCK
-            ) and current_block:
-                blocks.append({"start": current_start, "text": current_text.strip()})
+            if pause >= pause_threshold and current_block:
+                blocks.append({"start": current_start, "text": current_text})
                 current_block = []
+                current_start = start
+
+            elif len(current_text) >= MAX_CHARS_PER_BLOCK and current_block:
+                first_part, remaining = split_at_sentence_boundary(
+                    current_text,
+                    MAX_CHARS_PER_BLOCK,
+                )
+
+                if first_part:
+                    blocks.append({"start": current_start, "text": first_part})
+
+                current_block = [remaining] if remaining else []
                 current_start = start
 
         current_block.append(text)
@@ -1381,32 +1418,38 @@ def format_docx(req: FormatRequest):
     return {"docx_path": str(out)}
 
 
-# @app.post("/export_security_report")
-# async def export_security_report(report_text: str = Form(...)):
-#     if not report_text.strip():
-#         raise HTTPException(
-#             status_code=400,
-#             detail="No report text was provided.",
-#         )
+@app.post("/export_security_report")
+async def export_security_report(
+    request: Request,
+    report_text: str = Form(...),
+):
+    if not report_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No report text was provided.",
+        )
 
-#     out = await asyncio.to_thread(build_security_report_doc, report_text)
+    out = await asyncio.to_thread(build_security_report_doc, report_text)
 
-#     save_document_record(
-#         mode="text",
-#         original_filename=None,
-#         output_filename=out.name,
-#         status="completed",
-#         notes="Generated from pasted text input.",
-#     )
+    current_user = get_current_user(request)
 
-#     return JSONResponse(
-#         {
-#             "message": "Text transcript formatted successfully.",
-#             "docx_path": str(out),
-#             "docx_filename": out.name,
-#         }
-#     )
+    save_document_record(
+        mode="text",
+        original_filename=None,
+        output_filename=out.name,
+        status="completed",
+        notes="Generated from pasted text input.",
+        user_id=current_user.id if current_user else None,
+    )
 
+    return JSONResponse(
+        {
+            "message": "Text transcript formatted successfully.",
+            "docx_path": str(out),
+            "docx_filename": out.name,
+            "version": APP_VERSION,
+        }
+    )
 
 @app.post("/export_multi_image_ocr")
 async def export_multi_image_ocr(
@@ -1990,10 +2033,18 @@ def ui_async(request: Request):
           </div>
 
           <h1>LucidScript</h1>
-          <div class="version">Version __APP_VERSION__ • Whisper model: __MODEL_NAME__</div>
           <p>Choose a mode, then process audio, pasted text, or image text into a formatted .docx.</p>
-          <div class="card">
-          <div class="mode-row">
+            <div class="card">
+              <div class="mode-row">
+                <label for="mode">Mode</label>
+                <select id="mode" name="mode">
+                  <option value="audio">Audio Transcription</option>
+                  <option value="text">Text Input</option>
+                  <option value="image">Image Upload</option>
+                </select>
+              </div>
+
+              <div class="mode-row">
 
             <div id="mode-audio">
               <h2>Audio Transcription</h2>
@@ -2183,7 +2234,7 @@ def ui_async(request: Request):
               <input
                 id="author-search"
                 type="text"
-                placeholder="Search by author..."
+                placeholder="Search documents by author, filename, type, or language..."
                 style="margin-bottom:10px;"
               />
 
@@ -2826,14 +2877,18 @@ function renderDocuments(docs) {
 
   documentsList.innerHTML = docs.map(doc => {
     const created = doc.created_at
-      ? new Date(doc.created_at).toLocaleString()
+      ? new Date(doc.created_at + "Z").toLocaleString([], {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
       : "Unknown date";
 
     return `
       <div style="margin-bottom:12px; padding:10px; border:1px solid #444; border-radius:8px;">
         <div><strong>${escapeHtml(String(doc.mode || "document").toUpperCase())}</strong></div>
         <div>${escapeHtml(doc.output_filename || "Untitled document")}</div>
-        <div style="font-size:12px; opacity:0.7;">${escapeHtml(created)}</div>
+        <div style="font-size:12px; opacity:0.7;">Generated on ${escapeHtml(created)}
+        </div>
         <div style="font-size:12px; opacity:0.7;">Author: ${escapeHtml(doc.author || "Unknown")}</div>
         <a href="/download/${encodeURIComponent(doc.output_filename)}">Download</a>
       </div>
@@ -2844,11 +2899,28 @@ function renderDocuments(docs) {
 loadDocsBtn.addEventListener("click", loadDocuments);
 
 authorSearch.addEventListener("input", () => {
-  const query = authorSearch.value.toLowerCase();
+  const query = authorSearch.value.trim().toLowerCase();
 
-  const filtered = loadedDocuments.filter(doc =>
-    (doc.author || "").toLowerCase().includes(query)
-  );
+  if (!query) {
+    renderDocuments(loadedDocuments);
+    return;
+  }
+
+  const filtered = loadedDocuments.filter(doc => {
+    const author = (doc.author || "").toLowerCase();
+    const mode = (doc.mode || "").toLowerCase();
+    const outputFilename = (doc.output_filename || "").toLowerCase();
+    const originalFilename = (doc.original_filename || "").toLowerCase();
+    const language = (doc.language || "").toLowerCase();
+
+    return (
+      author.includes(query) ||
+      mode.includes(query) ||
+      outputFilename.includes(query) ||
+      originalFilename.includes(query) ||
+      language.includes(query)
+    );
+  });
 
   renderDocuments(filtered);
 });
