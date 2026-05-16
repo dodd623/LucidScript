@@ -10,3 +10,5 @@ env/
 output/
 .idea/
 .DS_Store
+lucidscript.db
+*.db
