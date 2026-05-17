@@ -18,3 +18,7 @@ primary_region = "iad"
     grace_period = "180s"
     interval = "30s"
     timeout = "10s"
+
+[mounts]
+  source = "lucidscript_data"
+  destination = "/data"
