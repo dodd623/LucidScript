@@ -1114,7 +1114,8 @@ def build_pause_aware_blocks(
     current_block = []
     current_start = None
     previous_end = None
-    MAX_CHARS_PER_BLOCK = 500
+    MAX_CHARS_PER_BLOCK = 260
+    MAX_SECONDS_PER_BLOCK = 15.0
 
     for segment in segments:
         text = (segment.get("text") or "").strip()
@@ -1136,7 +1137,10 @@ def build_pause_aware_blocks(
                 current_block = []
                 current_start = start
 
-            elif len(current_text) >= MAX_CHARS_PER_BLOCK and current_block:
+            elif (
+                len(current_text + " " + text) >= MAX_CHARS_PER_BLOCK
+                or (end - current_start) >= MAX_SECONDS_PER_BLOCK
+            ) and current_block:
                 first_part, remaining = split_at_sentence_boundary(
                     current_text,
                     MAX_CHARS_PER_BLOCK,
