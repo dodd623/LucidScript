@@ -50,9 +50,9 @@ BASE_DIR = pathlib.Path(__file__).parent.resolve()
 OUTPUT_DIR = (BASE_DIR / "output").resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-Path("/data").mkdir(parents=True, exist_ok=True)
+pathlib.Path("/data").mkdir(parents=True, exist_ok=True)
 
-DB_PATH = Path("/data/lucidscript.db")
+DB_PATH = pathlib.Path("/data/lucidscript.db")
 DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
