@@ -11,3 +11,4 @@ deep-translator
 sqlalchemy
 itsdangerous
 passlib[bcrypt]
+bcrypt==3.2.2
