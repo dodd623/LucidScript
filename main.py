@@ -50,6 +50,8 @@ BASE_DIR = pathlib.Path(__file__).parent.resolve()
 OUTPUT_DIR = (BASE_DIR / "output").resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+Path("/data").mkdir(parents=True, exist_ok=True)
+
 DB_PATH = Path("/data/lucidscript.db")
 DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
@@ -1450,6 +1452,7 @@ async def export_security_report(
             "version": APP_VERSION,
         }
     )
+
 
 @app.post("/export_multi_image_ocr")
 async def export_multi_image_ocr(
