@@ -3218,27 +3218,86 @@ def _make_deposition_doc(
 ):
     doc = Document()
     doc.add_heading(title, 0)
+
     meta = f"{datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Language: {language or 'unknown'}"
     if translated:
         meta += "  |  Translated→English"
     doc.add_paragraph(meta)
 
+    grouped_blocks = []
+    current_speaker = None
+    current_start = None
+    current_text = []
+
+    for seg in labeled:
+        speaker = seg.get("speaker", "Speaker 1")
+        text = (seg.get("text") or "").strip()
+        start = float(seg.get("start", 0.0))
+
+        if not text:
+            continue
+
+        if current_speaker is None:
+            current_speaker = speaker
+            current_start = start
+            current_text = [text]
+            continue
+
+        if speaker == current_speaker:
+            current_text.append(text)
+        else:
+            grouped_blocks.append(
+                {
+                    "speaker": current_speaker,
+                    "start": current_start,
+                    "text": " ".join(current_text).strip(),
+                }
+            )
+
+            current_speaker = speaker
+            current_start = start
+            current_text = [text]
+
+    if current_speaker is not None and current_text:
+        grouped_blocks.append(
+            {
+                "speaker": current_speaker,
+                "start": current_start,
+                "text": " ".join(current_text).strip(),
+            }
+        )
+
     line_limit = 25
     current_line = 0
-    for seg in labeled:
-        header = (
-            f"{seg['speaker']}  [{_time_fmt(seg['start'])}–{_time_fmt(seg['end'])}]"
-        )
-        p = doc.add_paragraph(header)
-        p.runs[0].bold = True
-        for line in seg["text"].splitlines() or [""]:
-            wrapped = "\n".join(textwrap.wrap(line, width=80)) or ""
+
+    for block in grouped_blocks:
+        if current_line >= line_limit:
+            doc.add_page_break()
+            current_line = 0
+
+        timestamp = _time_fmt(block["start"])
+
+        timestamp_p = doc.add_paragraph()
+        timestamp_p.add_run(f"[{timestamp}]").bold = True
+        current_line += 1
+
+        speaker_p = doc.add_paragraph()
+        speaker_p.add_run(f'{block["speaker"]}:').bold = True
+        current_line += 1
+
+        for paragraph in to_paragraphs(block["text"]):
+            wrapped = "\n".join(textwrap.wrap(paragraph, width=80)) or ""
+
             for sub in wrapped.split("\n") if wrapped else [""]:
                 if current_line >= line_limit:
                     doc.add_page_break()
                     current_line = 0
+
                 doc.add_paragraph(f"    {sub}")
                 current_line += 1
+
+        doc.add_paragraph("")
+        current_line += 1
 
     out = OUTPUT_DIR / f"lucidscript_{uuid.uuid4().hex[:8]}.docx"
     doc.save(out.as_posix())
