@@ -2236,6 +2236,13 @@ def ui_async(request: Request):
         <div class="wrap">
           <div class="topbar">
             <div id="user-indicator" class="user-indicator">__USER_LABEL__</div>
+            <a
+              id="admin-dashboard-link"
+              class="logout-button hidden"
+              href="/admin/usage"
+            >
+              Admin Dashboard
+            </a>
             <button class="theme-toggle" id="theme-toggle" type="button">Toggle theme</button>
             <button class="logout-button" id="app-logout-btn" type="button">Logout</button>
           </div>
@@ -3008,22 +3015,19 @@ async function loadCurrentUser() {
 
     if (data.authenticated) {
       userIndicator.textContent = `Signed in as ${data.username}`;
+
+      if ((data.email || "").toLowerCase() === "dodd623@gmail.com") {
+        adminDashboardLink.classList.remove("hidden");
+      }
     } else {
       userIndicator.textContent = "Guest Mode";
+      adminDashboardLink.classList.add("hidden");
     }
   } catch (err) {
     console.error("Failed to load current user:", err);
     userIndicator.textContent = "Could not load user";
   }
 }
-
-appLogoutBtn.addEventListener("click", async () => {
-  await fetch("/logout", {
-    method: "POST"
-  });
-
-  window.location.href = "/auth";
-});
 
 loadCurrentUser();
 
@@ -3645,6 +3649,7 @@ async def export_docx_from_youtube_v2(
 
 @app.post("/export_docx_from_youtube_v3")
 async def export_docx_from_youtube_v3(
+    request: Request,
     youtube_url: str = Form(...),
     language: str | None = Form(None),
     translate: str | None = Form(None),
@@ -3689,6 +3694,8 @@ async def export_docx_from_youtube_v3(
             labeled,
         )
 
+        current_user = get_current_user(request)
+
         save_document_record(
             mode="audio",
             original_filename=title,
@@ -3697,6 +3704,7 @@ async def export_docx_from_youtube_v3(
             language=detected_language,
             translated=translate_flag,
             notes=f"YouTube source: {youtube_url}",
+            user_id=current_user.id if current_user else None,
         )
 
         return {
