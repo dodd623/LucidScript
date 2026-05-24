@@ -21,6 +21,13 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 app = FastAPI()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "lucidscript-dev-secret-change-me")
+
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("ADMIN_EMAILS", "dodd623@gmail.com").split(",")
+    if email.strip()
+}
+
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -154,6 +161,18 @@ def get_current_user(request: Request):
         db.close()
 
 
+def require_admin(request: Request):
+    current_user = get_current_user(request)
+
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    if current_user.email.lower() not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+
+    return current_user
+
+
 @app.get("/documents")
 def list_documents(request: Request):
     current_user = get_current_user(request)
@@ -185,6 +204,188 @@ def list_documents(request: Request):
             }
             for r in records
         ]
+    finally:
+        db.close()
+
+
+@app.get("/admin/usage", response_class=HTMLResponse)
+def admin_usage_page(request: Request):
+    admin_user = require_admin(request)
+
+    db = SessionLocal()
+    try:
+        records = (
+            db.query(DocumentRecord, User)
+            .outerjoin(User, DocumentRecord.user_id == User.id)
+            .order_by(DocumentRecord.created_at.desc())
+            .all()
+        )
+
+        rows = ""
+
+        for record, user in records:
+            created = (
+                record.created_at.strftime("%Y-%m-%d %H:%M")
+                if record.created_at
+                else "Unknown"
+            )
+
+            username = user.username if user else "Guest / Unknown"
+            email = user.email if user else "N/A"
+
+            status_class = "status-ok" if record.status == "completed" else "status-bad"
+
+            rows += f"""
+            <tr>
+              <td>{html.escape(created)}</td>
+              <td>{html.escape(username)}</td>
+              <td>{html.escape(email)}</td>
+              <td>{html.escape(record.mode or "")}</td>
+              <td>{html.escape(record.original_filename or "N/A")}</td>
+              <td>{html.escape(record.output_filename or "")}</td>
+              <td class="{status_class}">{html.escape(record.status or "")}</td>
+              <td>{html.escape(record.language or "N/A")}</td>
+              <td>{html.escape("Yes" if record.translated else "No")}</td>
+              <td>{html.escape(record.error_message or "")}</td>
+            </tr>
+            """
+
+        if not rows:
+            rows = """
+            <tr>
+              <td colspan="10">No usage records found yet.</td>
+            </tr>
+            """
+
+        return f"""
+        <html>
+          <head>
+            <title>LucidScript Admin Usage</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <style>
+              body {{
+                font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+                background: #0f1115;
+                color: #eaeef3;
+                padding: 28px;
+              }}
+
+              h1 {{
+                margin-bottom: 6px;
+              }}
+
+              p {{
+                color: rgba(234, 238, 243, 0.75);
+              }}
+
+              .top {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                margin-bottom: 20px;
+              }}
+
+              .admin-badge {{
+                border: 1px solid #2a3042;
+                border-radius: 999px;
+                padding: 8px 12px;
+                color: rgba(234, 238, 243, 0.78);
+                background: #171a21;
+                font-size: 13px;
+              }}
+
+              .table-wrap {{
+                overflow-x: auto;
+                border: 1px solid #2a3042;
+                border-radius: 12px;
+              }}
+
+              table {{
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 14px;
+                min-width: 1100px;
+              }}
+
+              th, td {{
+                border-bottom: 1px solid #2a3042;
+                padding: 10px;
+                text-align: left;
+                vertical-align: top;
+              }}
+
+              th {{
+                background: #171a21;
+                position: sticky;
+                top: 0;
+              }}
+
+              tr:nth-child(even) {{
+                background: #151922;
+              }}
+
+              .status-ok {{
+                color: #71eea0;
+                font-weight: 700;
+              }}
+
+              .status-bad {{
+                color: #ff8a8a;
+                font-weight: 700;
+              }}
+
+              a {{
+                color: #8fb2ff;
+                text-decoration: none;
+              }}
+
+              .note {{
+                margin-top: 14px;
+                font-size: 13px;
+              }}
+            </style>
+          </head>
+
+          <body>
+            <div class="top">
+              <div>
+                <h1>LucidScript Admin Usage</h1>
+                <p>Tracks usage metadata only. Transcript and OCR contents are not shown.</p>
+              </div>
+              <div class="admin-badge">
+                Admin: {html.escape(admin_user.email)}
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Mode</th>
+                    <th>Original File</th>
+                    <th>Output File</th>
+                    <th>Status</th>
+                    <th>Language</th>
+                    <th>Translated</th>
+                    <th>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows}
+                </tbody>
+              </table>
+            </div>
+
+            <p class="note">
+              <a href="/ui_async">← Back to LucidScript</a>
+            </p>
+          </body>
+        </html>
+        """
     finally:
         db.close()
 
