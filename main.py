@@ -1762,6 +1762,19 @@ async def export_multi_image_ocr(
 
         print("[OCR] ERROR:")
         traceback.print_exc()
+        current_user = get_current_user(request)
+        save_document_record(
+            mode="image",
+            original_filename=(
+                ", ".join(item["filename"] for item in file_results)
+                if file_results
+                else "unknown"
+            ),
+            output_filename="failed",
+            status="failed",
+            error_message=str(e),
+            user_id=current_user.id if current_user else None,
+        )
         raise HTTPException(
             status_code=500,
             detail=f"OCR route failed: {str(e)}",
@@ -1881,7 +1894,6 @@ async def export_docx_from_audio(request: Request, file: UploadFile = File(...))
 def guest_ui(request: Request):
     request.session["guest_mode"] = True
     return RedirectResponse(url="/ui_async", status_code=302)
-
 
 
 @app.get("/ui_async", response_class=HTMLResponse)
@@ -3282,7 +3294,16 @@ async def export_docx_from_audio_v2(
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        current_user = get_current_user(request)
+        save_document_record(
+            mode="audio",
+            original_filename=file.filename,
+            output_filename="failed",
+            status="failed",
+            error_message=str(e),
+            user_id=current_user.id if current_user else None,
+        )
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while processing the audio. Please try again with a different file.",
@@ -3645,7 +3666,16 @@ async def export_docx_from_audio_v3(
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        current_user = get_current_user(request)
+        save_document_record(
+            mode="audio",
+            original_filename=file.filename,
+            output_filename="failed",
+            status="failed",
+            error_message=str(e),
+            user_id=current_user.id if current_user else None,
+        )
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while processing the audio. Please try a different file.",
@@ -3777,4 +3807,3 @@ async def export_docx_from_youtube_v3(
                 os.remove(audio_path)
         except Exception:
             pass
-          
