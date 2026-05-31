@@ -2128,17 +2128,6 @@ def ui_async(request: Request):
             margin-top: 14px;
           }
 
-          .intro-card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 16px 22px;
-            margin-bottom: 14px;
-            font-size: 14px;
-            box-shadow: var(--shadow);
-            line-height: 1.55;
-          }
-
           .row {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -2344,15 +2333,7 @@ def ui_async(request: Request):
           <h1>LucidScript</h1>
           <p>Choose a mode, then process audio, pasted text, or image text into a formatted .docx.</p>
 
-          <!-- CHANGE 4: First-time user intro card -->
-          <div class="intro-card">
-            <strong>New here?</strong>
-            <span style="color:var(--muted);">
-              Pick a mode below, upload your file or paste text, and download a formatted
-              <code>.docx</code> when it's done. Audio files are transcribed automatically —
-              no setup required. <a href="/auth">Create a free account</a> to save your document history.
-            </span>
-          </div>
+
 
             <div class="card">
               <div class="mode-row">
@@ -3264,7 +3245,7 @@ authorSearch.addEventListener("input", () => {
     </html>
     """
     # Inject the admin emails list into the JS so the frontend knows who gets the dashboard link
-    admin_emails_js = str(list(ADMIN_EMAILS)).replace("'", "\"'")
+    admin_emails_js = json.dumps(list(ADMIN_EMAILS))
     return (
         page.replace("__APP_VERSION__", html.escape(APP_VERSION))
         .replace("__MODEL_NAME__", html.escape(model_name))
