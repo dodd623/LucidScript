@@ -28,15 +28,37 @@ ADMIN_EMAILS = {
     if email.strip()
 }
 
-# CHANGE 1: max_age=2592000 keeps the session cookie alive for 30 days.
-# The session will only end if the user explicitly logs out.
+# Session cookie — no max_age so it's a true browser session cookie.
+# Persistence across window closes is handled by the ls_uid remember-me cookie.
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
-    max_age=2592000,  # 30 days in seconds
-    https_only=False,
+    https_only=os.getenv("FLY_APP_NAME") is not None,
     same_site="lax",
 )
+
+REMEMBER_ME_MAX_AGE = 60 * 60 * 24 * 30  # 30 days in seconds
+
+
+def _sign_uid(user_id: int) -> str:
+    """Create a tamper-evident token: '<user_id>.<hmac>'"""
+    raw = f"{user_id}:{SECRET_KEY}"
+    sig = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return f"{user_id}.{sig}"
+
+
+def _verify_uid(token: str) -> int | None:
+    """Return user_id if the token is valid, else None."""
+    try:
+        uid_str, sig = token.split(".", 1)
+        uid = int(uid_str)
+        expected = _sign_uid(uid).split(".")[1]
+        if sig == expected:
+            return uid
+    except Exception:
+        pass
+    return None
+
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -159,6 +181,17 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def get_current_user(request: Request):
     user_id = request.session.get("user_id")
+
+    # If session expired/cleared, try the remember-me cookie
+    if not user_id:
+        token = request.cookies.get("ls_uid")
+        if token:
+            uid = _verify_uid(token)
+            if uid:
+                # Restore the session so subsequent requests don't re-check
+                request.session["user_id"] = uid
+                user_id = uid
+
     if not user_id:
         return None
 
@@ -857,6 +890,7 @@ async def login(
     request: Request,
     username_or_email: str = Form(...),
     password: str = Form(...),
+    remember_me: str = Form(default="false"),
 ):
     login_value = username_or_email.strip()
     login_email = login_value.lower()
@@ -877,10 +911,27 @@ async def login(
         request.session["user_id"] = user.id
         request.session.pop("guest_mode", None)
 
-        return {
-            "message": "Logged in successfully.",
-            "username": user.username,
-        }
+        response = JSONResponse(
+            {
+                "message": "Logged in successfully.",
+                "username": user.username,
+            }
+        )
+
+        if remember_me.lower() == "true":
+            response.set_cookie(
+                key="ls_uid",
+                value=_sign_uid(user.id),
+                max_age=REMEMBER_ME_MAX_AGE,
+                httponly=True,
+                samesite="lax",
+                secure=os.getenv("FLY_APP_NAME") is not None,
+            )
+        else:
+            # Clear any existing remember-me cookie if they log in without it
+            response.delete_cookie("ls_uid")
+
+        return response
     finally:
         db.close()
 
@@ -888,7 +939,9 @@ async def login(
 @app.post("/logout")
 async def logout(request: Request):
     request.session.clear()
-    return {"message": "Logged out successfully."}
+    response = JSONResponse({"message": "Logged out successfully."})
+    response.delete_cookie("ls_uid")
+    return response
 
 
 @app.get("/me")
@@ -1104,6 +1157,11 @@ def auth_page():
                 <label for="login-password">Password</label>
                 <input id="login-password" name="password" type="password" required />
 
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+                  <input type="checkbox" id="remember-me" name="remember_me" value="true" style="width:auto; margin:0;" />
+                  <label for="remember-me" style="margin:0; font-size:13px; cursor:pointer;">Remember me for 30 days</label>
+                </div>
+
                 <button type="submit">Log In</button>
               </form>
 
@@ -1191,6 +1249,10 @@ def auth_page():
             e.preventDefault();
 
             const fd = new FormData(loginForm);
+            // Ensure remember_me is always sent, even when unchecked
+            if (!fd.has("remember_me")) {
+              fd.set("remember_me", "false");
+            }
 
             try {
               const resp = await fetch("/login", {
