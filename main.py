@@ -28,7 +28,15 @@ ADMIN_EMAILS = {
     if email.strip()
 }
 
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+# CHANGE 1: max_age=2592000 keeps the session cookie alive for 30 days.
+# The session will only end if the user explicitly logs out.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    max_age=2592000,  # 30 days in seconds
+    https_only=False,
+    same_site="lax",
+)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -1252,7 +1260,7 @@ def upload_ui():
               <div class="hint">
                 Supported: <code>WAV</code>, <code>MP3</code>, <code>M4A</code>, <code>AAC</code>, <code>FLAC</code>, <code>OGG</code>, <code>WEBM</code>, <code>MP4</code>
               </div>
-              <button type="submit">Transcribe & Export</button>
+              <button type="submit">Transcribe &amp; Export</button>
             </form>
             <small>Prefer the API? Try <a href="/docs">/docs</a> or the async UI at <a href="/ui_async">/ui_async</a>.</small>
           </div>
@@ -1875,6 +1883,7 @@ def guest_ui(request: Request):
     return RedirectResponse(url="/ui_async", status_code=302)
 
 
+
 @app.get("/ui_async", response_class=HTMLResponse)
 def ui_async(request: Request):
     current_user = get_current_user(request)
@@ -2043,6 +2052,17 @@ def ui_async(request: Request):
             border-radius: 12px;
             padding: 18px;
             margin-top: 14px;
+          }
+
+          .intro-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px 22px;
+            margin-bottom: 14px;
+            font-size: 14px;
+            box-shadow: var(--shadow);
+            line-height: 1.55;
           }
 
           .row {
@@ -2249,6 +2269,17 @@ def ui_async(request: Request):
 
           <h1>LucidScript</h1>
           <p>Choose a mode, then process audio, pasted text, or image text into a formatted .docx.</p>
+
+          <!-- CHANGE 4: First-time user intro card -->
+          <div class="intro-card">
+            <strong>New here?</strong>
+            <span style="color:var(--muted);">
+              Pick a mode below, upload your file or paste text, and download a formatted
+              <code>.docx</code> when it's done. Audio files are transcribed automatically —
+              no setup required. <a href="/auth">Create a free account</a> to save your document history.
+            </span>
+          </div>
+
             <div class="card">
               <div class="mode-row">
                 <label for="mode">Mode</label>
@@ -2302,6 +2333,12 @@ def ui_async(request: Request):
         <option value="zh">Mandarin Chinese — zh</option>
         <option value="fr">French — fr</option>
       </select>
+      <!-- CHANGE 3: Multilingual language note -->
+      <div class="hint" style="margin-top:6px;">
+        Language is auto-detected. If multiple languages are spoken, Whisper transcribes
+        using the dominant language detected. Enable “Translate to English” to normalize
+        mixed-language audio into English output.
+      </div>
     </div>
 
     <div class="stack" style="margin-top:24px">
@@ -2333,7 +2370,7 @@ def ui_async(request: Request):
     </fieldset>
   </div>
 
-  <button id="audio-submit-btn" type="submit">Transcribe & Export</button>
+  <button id="audio-submit-btn" type="submit">Transcribe &amp; Export</button>
 </form>
 
               <div id="audio-progress-wrap" class="progress-wrap">
@@ -2395,7 +2432,7 @@ def ui_async(request: Request):
     <label for="translate_image_text" style="margin:0;">Translate extracted text to English</label>
   </div>
   
-                <button id="image-submit-btn" type="submit">Extract & Export</button>
+                <button id="image-submit-btn" type="submit">Extract &amp; Export</button>
               </form>
 
               <div id="image-progress-wrap" class="progress-wrap">
@@ -2486,6 +2523,9 @@ def ui_async(request: Request):
           const imageSubmitBtn = document.getElementById('image-submit-btn');
 
           const themeToggle = document.getElementById('theme-toggle');
+
+          // CHANGE 2: adminDashboardLink declaration (was missing, caused ReferenceError)
+          const adminDashboardLink = document.getElementById('admin-dashboard-link');
 
           function applyTheme(theme) {
             root.setAttribute('data-theme', theme);
@@ -3016,7 +3056,7 @@ async function loadCurrentUser() {
     if (data.authenticated) {
       userIndicator.textContent = `Signed in as ${data.username}`;
 
-      if ((data.email || "").toLowerCase() === "dodd623@gmail.com") {
+      if (data.email && __ADMIN_EMAILS__.includes(data.email.toLowerCase())) {
         adminDashboardLink.classList.remove("hidden");
       }
     } else {
@@ -3028,6 +3068,14 @@ async function loadCurrentUser() {
     userIndicator.textContent = "Could not load user";
   }
 }
+
+appLogoutBtn.addEventListener("click", async () => {
+  await fetch("/logout", {
+    method: "POST"
+  });
+
+  window.location.href = "/auth";
+});
 
 loadCurrentUser();
 
@@ -3044,7 +3092,8 @@ async function setupDocumentsArea() {
     const data = await resp.json();
 
     if (!data.authenticated) {
-      docsHelper.textContent = "Create an account or log in to save and view your documents.";
+      // CHANGE 4: clearer guest message
+      docsHelper.textContent = "Sign in or create a free account to save and revisit your documents.";
       loadDocsBtn.disabled = true;
       loadDocsBtn.textContent = "Login Required";
     }
@@ -3140,10 +3189,13 @@ authorSearch.addEventListener("input", () => {
       </body>
     </html>
     """
+    # Inject the admin emails list into the JS so the frontend knows who gets the dashboard link
+    admin_emails_js = str(list(ADMIN_EMAILS)).replace("'", "\"'")
     return (
         page.replace("__APP_VERSION__", html.escape(APP_VERSION))
         .replace("__MODEL_NAME__", html.escape(model_name))
         .replace("__USER_LABEL__", user_label)
+        .replace("__ADMIN_EMAILS__", admin_emails_js)
     )
 
 
@@ -3433,7 +3485,7 @@ def _make_deposition_doc(
 
     meta = f"{datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Language: {language or 'unknown'}"
     if translated:
-        meta += "  |  Translated→English"
+        meta += "  |  Translated\u2192English"
     doc.add_paragraph(meta)
 
     grouped_blocks = []
@@ -3725,3 +3777,4 @@ async def export_docx_from_youtube_v3(
                 os.remove(audio_path)
         except Exception:
             pass
+          
