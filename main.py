@@ -971,7 +971,12 @@ def test_youtube(url: str):
 
 
 @app.get("/auth", response_class=HTMLResponse)
-def auth_page():
+def auth_page(request: Request):
+    current_user = get_current_user(request)
+
+    if current_user:
+        return RedirectResponse(url="/ui_async", status_code=302)
+
     return """
     <html data-theme="dark">
       <head>
