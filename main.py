@@ -59,7 +59,6 @@ def _verify_uid(token: str) -> int | None:
         pass
     return None
 
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 APP_VERSION = os.getenv("APP_VERSION", "0.3.1").strip()
@@ -911,12 +910,10 @@ async def login(
         request.session["user_id"] = user.id
         request.session.pop("guest_mode", None)
 
-        response = JSONResponse(
-            {
-                "message": "Logged in successfully.",
-                "username": user.username,
-            }
-        )
+        response = JSONResponse({
+            "message": "Logged in successfully.",
+            "username": user.username,
+        })
 
         if remember_me.lower() == "true":
             response.set_cookie(
@@ -971,12 +968,7 @@ def test_youtube(url: str):
 
 
 @app.get("/auth", response_class=HTMLResponse)
-def auth_page(request: Request):
-    current_user = get_current_user(request)
-
-    if current_user:
-        return RedirectResponse(url="/ui_async", status_code=302)
-
+def auth_page():
     return """
     <html data-theme="dark">
       <head>
@@ -1665,6 +1657,49 @@ def translate_mixed_text_to_english(text: str) -> str:
     return "\n".join(translated_lines).strip()
 
 
+def normalize_professional_english(text: str) -> str:
+    replacements = [
+        # Multi-word phrases first (before single-word replacements fire)
+        (r"\bI ain't gonna lie\b", "to be honest"),
+        (r"\bain't gonna lie\b", "to be honest"),
+        (r"\bI'ma\b", "I am going to"),
+        (r"\bImma\b", "I am going to"),
+        # Contractions and informal verbs
+        (r"\bgonna\b", "going to"),
+        (r"\bwanna\b", "want to"),
+        (r"\bgotta\b", "have to"),
+        (r"\bfinna\b", "going to"),
+        (r"\btryna\b", "trying to"),
+        (r"\bhafta\b", "have to"),
+        (r"\boughta\b", "ought to"),
+        (r"\bcoulda\b", "could have"),
+        (r"\bwoulda\b", "would have"),
+        (r"\bshoulda\b", "should have"),
+        (r"\bbetcha\b", "bet you"),
+        (r"\bdunno\b", "do not know"),
+        # Filler / informal words
+        (r"\bkinda\b", "kind of"),
+        (r"\bsorta\b", "sort of"),
+        (r"\blemme\b", "let me"),
+        (r"\bgimme\b", "give me"),
+        (r"\banyways\b", "anyway"),
+        (r"\binnit\b", "is it not"),
+        (r"\bngl\b", "not going to lie"),
+        (r"\btbh\b", "to be honest"),
+        (r"\blowkey\b", "somewhat"),
+        (r"\bhighkey\b", "definitely"),
+        (r"\bdeadass\b", "seriously"),
+        # Pronouns and conjunctions
+        (r"\bain't\b", "is not"),
+        (r"\by'all\b", "you all"),
+        (r"\bcuz\b", "because"),
+        (r"\bcause\b", "because"),
+    ]
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename or "")[-1]
@@ -1832,11 +1867,7 @@ async def export_multi_image_ocr(
         current_user = get_current_user(request)
         save_document_record(
             mode="image",
-            original_filename=(
-                ", ".join(item["filename"] for item in file_results)
-                if file_results
-                else "unknown"
-            ),
+            original_filename=", ".join(item["filename"] for item in file_results) if file_results else "unknown",
             output_filename="failed",
             status="failed",
             error_message=str(e),
@@ -1961,6 +1992,7 @@ async def export_docx_from_audio(request: Request, file: UploadFile = File(...))
 def guest_ui(request: Request):
     request.session["guest_mode"] = True
     return RedirectResponse(url="/ui_async", status_code=302)
+
 
 
 @app.get("/ui_async", response_class=HTMLResponse)
@@ -2404,6 +2436,10 @@ def ui_async(request: Request):
     <div class="stack" style="margin-top:24px">
       <input type="checkbox" id="translate" name="translate" value="true" />
       <label for="translate" style="margin:0;">Translate to English</label>
+    </div>
+    <div class="stack" style="margin-top:10px">
+      <input type="checkbox" id="professional_cleanup" name="professional_cleanup" value="true" />
+      <label for="professional_cleanup" style="margin:0;">Professional English Cleanup</label>
     </div>
   </div>
 
@@ -2867,6 +2903,7 @@ function updateAudioSourceUI() {
   const fd = new FormData(audioForm);
   fd.set('translate', document.getElementById('translate').checked ? 'true' : 'false');
   fd.set('diarize', document.getElementById('diarize').checked ? 'true' : 'false');
+  fd.set('professional_cleanup', document.getElementById('professional_cleanup').checked ? 'true' : 'false');
 
   const style = (document.querySelector('input[name="style"]:checked') || {}).value || 'standard';
   const source = audioSourceSelect.value;
@@ -3279,6 +3316,7 @@ async def export_docx_from_audio_v2(
     file: UploadFile = File(...),
     language: str | None = Form(None),
     translate: str | None = Form(None),
+    professional_cleanup: str | None = Form(None),
 ):
     suffix = os.path.splitext(file.filename or "")[-1]
     tmp_path = None
@@ -3306,6 +3344,14 @@ async def export_docx_from_audio_v2(
             round(float(result.get("duration", 0)), 2) if "duration" in result else None
         )
         translated_flag = (translate or "").lower() == "true"
+        cleanup_flag = (professional_cleanup or "").lower() == "true"
+
+        segments = result.get("segments", [])
+        if cleanup_flag:
+            text = normalize_professional_english(text)
+            for seg in segments:
+                if seg.get("text"):
+                    seg["text"] = normalize_professional_english(seg["text"])
 
         out = await asyncio.to_thread(
             build_transcript_doc,
@@ -3313,7 +3359,7 @@ async def export_docx_from_audio_v2(
             text,
             lang,
             translated_flag,
-            result.get("segments", []),
+            segments,
         )
 
         current_user = get_current_user(request)
@@ -3325,7 +3371,7 @@ async def export_docx_from_audio_v2(
             status="completed",
             language=lang,
             translated=translated_flag,
-            notes="Generated from async audio route v2.",
+            notes="Generated from async audio route v2." + (" Professional English cleanup applied." if cleanup_flag else ""),
             user_id=current_user.id if current_user else None,
         )
 
@@ -3337,6 +3383,7 @@ async def export_docx_from_audio_v2(
                 "language": lang,
                 "duration_sec": duration,
                 "translated": translated_flag,
+                "professional_cleanup": cleanup_flag,
                 "version": APP_VERSION,
             }
         )
@@ -3452,6 +3499,7 @@ async def process_audio_file_to_docx(
     translate: bool = False,
     notes: str | None = None,
     user_id: int | None = None,
+    professional_cleanup: bool = False,
 ):
     kwargs = {}
     if language:
@@ -3473,6 +3521,9 @@ async def process_audio_file_to_docx(
         round(float(result.get("duration", 0)), 2) if "duration" in result else None
     )
 
+    if professional_cleanup:
+        text = normalize_professional_english(text)
+
     out = await asyncio.to_thread(
         build_transcript_doc,
         "LucidScript Transcript",
@@ -3489,7 +3540,7 @@ async def process_audio_file_to_docx(
         status="completed",
         language=detected_language,
         translated=translate,
-        notes=notes or "Generated from shared audio processing helper.",
+        notes=(notes or "Generated from shared audio processing helper.") + (" Professional English cleanup applied." if professional_cleanup else ""),
         user_id=user_id,
     )
 
@@ -3499,6 +3550,7 @@ async def process_audio_file_to_docx(
         "language": detected_language,
         "duration_sec": duration,
         "translated": translate,
+        "professional_cleanup": professional_cleanup,
         "version": APP_VERSION,
     }
 
@@ -3644,6 +3696,7 @@ async def export_docx_from_audio_v3(
     language: str | None = Form(None),
     translate: str | None = Form(None),
     diarize: str | None = Form(None),
+    professional_cleanup: str | None = Form(None),
 ):
     suffix = os.path.splitext(file.filename or "")[-1]
     tmp_path = None
@@ -3667,7 +3720,14 @@ async def export_docx_from_audio_v3(
                 detail="No speech was detected in this file. Try a different recording.",
             )
 
+        cleanup_flag = (professional_cleanup or "").lower() == "true"
+
         segments = result.get("segments", [])
+        if cleanup_flag:
+            for seg in segments:
+                if seg.get("text"):
+                    seg["text"] = normalize_professional_english(seg["text"])
+
         do_diar = (diarize or "").lower() == "true"
         if do_diar:
             wav16k = await asyncio.to_thread(_convert_to_wav, tmp_path)
@@ -3693,7 +3753,7 @@ async def export_docx_from_audio_v3(
             status="completed",
             language=result.get("language", "unknown"),
             translated=((translate or "").lower() == "true"),
-            notes="Generated from deposition audio route v3.",
+            notes="Generated from deposition audio route v3." + (" Professional English cleanup applied." if cleanup_flag else ""),
             user_id=current_user.id if current_user else None,
         )
 
@@ -3709,6 +3769,7 @@ async def export_docx_from_audio_v3(
                     else None
                 ),
                 "translated": ((translate or "").lower() == "true"),
+                "professional_cleanup": cleanup_flag,
                 "version": APP_VERSION,
             }
         )
@@ -3748,8 +3809,10 @@ async def export_docx_from_youtube_v2(
     language: str | None = Form(None),
     translate: bool = Form(False),
     diarize: bool = Form(False),
+    professional_cleanup: str | None = Form(None),
 ):
     audio_path = None
+    cleanup_flag = (professional_cleanup or "").lower() == "true"
     try:
         # Download audio
         audio_path, metadata = download_youtube_audio(youtube_url)
@@ -3765,6 +3828,7 @@ async def export_docx_from_youtube_v2(
             translate=translate,
             notes=f"YouTube source: {youtube_url}",
             user_id=current_user.id if current_user else None,
+            professional_cleanup=cleanup_flag,
         )
 
         return result
@@ -3784,12 +3848,14 @@ async def export_docx_from_youtube_v3(
     language: str | None = Form(None),
     translate: str | None = Form(None),
     diarize: str | None = Form(None),
+    professional_cleanup: str | None = Form(None),
 ):
     audio_path = None
     wav_path = None
     try:
         translate_flag = (translate or "").lower() == "true"
         diarize_flag = (diarize or "").lower() == "true"
+        cleanup_flag = (professional_cleanup or "").lower() == "true"
 
         audio_path, metadata = download_youtube_audio(youtube_url)
         title = metadata.get("title") or "youtube_audio"
@@ -3810,11 +3876,17 @@ async def export_docx_from_youtube_v3(
 
         detected_language = result.get("language", "unknown")
 
+        segments = result.get("segments", [])
+        if cleanup_flag:
+            for seg in segments:
+                if seg.get("text"):
+                    seg["text"] = normalize_professional_english(seg["text"])
+
         if diarize_flag:
             dia = await asyncio.to_thread(_diarize_segments_dep, wav_path)
-            labeled = _assign_speakers(result.get("segments", []), dia)
+            labeled = _assign_speakers(segments, dia)
         else:
-            labeled = _assign_speakers(result.get("segments", []), [])
+            labeled = _assign_speakers(segments, [])
 
         out = await asyncio.to_thread(
             _make_deposition_doc,
@@ -3833,7 +3905,7 @@ async def export_docx_from_youtube_v3(
             status="completed",
             language=detected_language,
             translated=translate_flag,
-            notes=f"YouTube source: {youtube_url}",
+            notes=f"YouTube source: {youtube_url}." + (" Professional English cleanup applied." if cleanup_flag else ""),
             user_id=current_user.id if current_user else None,
         )
 
@@ -3841,6 +3913,7 @@ async def export_docx_from_youtube_v3(
             "docx_filename": out.name,
             "language": detected_language,
             "translated": translate_flag,
+            "professional_cleanup": cleanup_flag,
             "version": APP_VERSION,
         }
 
