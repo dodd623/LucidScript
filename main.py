@@ -113,6 +113,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
 
 
 class DocumentRecord(Base):
@@ -136,6 +137,27 @@ class DocumentRecord(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_is_admin_column():
+    """
+    One-time migration: SQLite's create_all() won't ALTER an existing 'users'
+    table, so if the DB predates the is_admin column we add it manually.
+    Safe to run on every startup — it's a no-op once the column exists.
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        cols = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+        col_names = {row[1] for row in cols}
+        if "is_admin" not in col_names:
+            conn.execute(
+                text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0")
+            )
+            conn.commit()
+
+
+_ensure_is_admin_column()
 
 
 def save_document_record(
@@ -201,13 +223,27 @@ def get_current_user(request: Request):
         db.close()
 
 
+def is_admin_user(user) -> bool:
+    """
+    A user is an admin if either:
+      - their email is in the bootstrap ADMIN_EMAILS list (so you can never
+        lock yourself out, even on a fresh/empty database), or
+      - their is_admin flag is set in the database (granted access).
+    """
+    if user is None:
+        return False
+    if user.email and user.email.lower() in ADMIN_EMAILS:
+        return True
+    return bool(getattr(user, "is_admin", False))
+
+
 def require_admin(request: Request):
     current_user = get_current_user(request)
 
     if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    if current_user.email.lower() not in ADMIN_EMAILS:
+    if not is_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin access required.")
 
     return current_user
@@ -260,6 +296,29 @@ def admin_usage_page(request: Request):
             .order_by(DocumentRecord.created_at.desc())
             .all()
         )
+
+        total_documents = len(records)
+        completed_jobs = sum(
+            1 for record, _ in records
+            if (record.status or "").lower() == "completed"
+        )
+        failed_jobs = sum(
+            1 for record, _ in records
+            if (record.status or "").lower() == "failed"
+        )
+        audio_jobs = sum(
+            1 for record, _ in records
+            if (record.mode or "").lower() == "audio"
+        )
+        image_jobs = sum(
+            1 for record, _ in records
+            if (record.mode or "").lower() == "image"
+        )
+        text_jobs = sum(
+            1 for record, _ in records
+            if (record.mode or "").lower() == "text"
+        )
+        registered_users = db.query(User).count()
 
         rows = ""
 
@@ -334,6 +393,57 @@ def admin_usage_page(request: Request):
                 background: #171a21;
                 font-size: 13px;
               }}
+              
+              .stats-grid {{
+                display: grid;
+                grid-template-columns: repeat(4, minmax(160px, 1fr));
+                gap: 12px;
+                margin-bottom: 18px;
+              }}
+
+              .stat-card {{
+                border: 1px solid #2a3042;
+                border-radius: 12px;
+                background: #171a21;
+                padding: 14px;
+              }}
+
+              .stat-label {{
+                color: rgba(234, 238, 243, 0.7);
+                font-size: 13px;
+                margin-bottom: 6px;
+              }}
+
+              .stat-value {{
+                font-size: 26px;
+                font-weight: 800;
+              }}
+
+              @media (max-width: 900px) {{
+                .stats-grid {{
+                  grid-template-columns: repeat(2, minmax(160px, 1fr));
+                }}
+              }}
+
+              @media (max-width: 520px) {{
+                .stats-grid {{
+                  grid-template-columns: 1fr;
+                }}
+              }}
+              
+              .search-box {{
+                margin-bottom: 14px;
+              }}
+
+              .search-box input {{
+                width: 100%;
+                padding: 12px;
+                border-radius: 10px;
+                border: 1px solid #2a3042;
+                background: #171a21;
+                color: #eaeef3;
+                font-size: 14px;
+              }}
 
               .table-wrap {{
                 overflow-x: auto;
@@ -398,6 +508,51 @@ def admin_usage_page(request: Request):
               </div>
             </div>
 
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-label">Total Documents</div>
+                <div class="stat-value">{total_documents}</div>
+              </div>
+
+              <div class="stat-card">
+                <div class="stat-label">Completed Jobs</div>
+                <div class="stat-value">{completed_jobs}</div>
+              </div>
+
+              <div class="stat-card">
+                <div class="stat-label">Failed Jobs</div>
+                <div class="stat-value">{failed_jobs}</div>
+              </div>
+
+              <div class="stat-card">
+                <div class="stat-label">Registered Users</div>
+                <div class="stat-value">{registered_users}</div>
+              </div>
+
+              <div class="stat-card">
+                <div class="stat-label">Audio Jobs</div>
+                <div class="stat-value">{audio_jobs}</div>
+              </div>
+
+              <div class="stat-card">
+                <div class="stat-label">Image Jobs</div>
+                <div class="stat-value">{image_jobs}</div>
+              </div>
+
+              <div class="stat-card">
+                <div class="stat-label">Text Jobs</div>
+                <div class="stat-value">{text_jobs}</div>
+              </div>
+            </div>
+
+            <div class="search-box">
+              <input
+                id="admin-search"
+                type="text"
+                placeholder="Search by user, email, mode, filename, status, language, or error..."
+              />
+            </div>
+
             <div class="table-wrap">
               <table>
                 <thead>
@@ -414,18 +569,108 @@ def admin_usage_page(request: Request):
                     <th>Error</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody id="admin-usage-body">
                   {rows}
                 </tbody>
               </table>
             </div>
 
             <p class="note">
-              <a href="/ui_async">← Back to LucidScript</a>
-            </p>
+            <a href="/ui_async">← Back to LucidScript</a>
+          </p>
+
+          <script>
+            const adminSearch = document.getElementById("admin-search");
+            const adminUsageBody = document.getElementById("admin-usage-body");
+
+            if (adminSearch && adminUsageBody) {{
+              const rows = Array.from(adminUsageBody.querySelectorAll("tr"));
+
+              adminSearch.addEventListener("input", () => {{
+                const query = adminSearch.value.trim().toLowerCase();
+
+                rows.forEach((row) => {{
+                  const text = row.textContent.toLowerCase();
+                  row.style.display = text.includes(query) ? "" : "none";
+                }});
+              }});
+            }}
+          </script>
           </body>
         </html>
         """
+    finally:
+        db.close()
+
+
+@app.post("/admin/promote")
+def admin_promote_user(request: Request, email: str = Form(...)):
+    """
+    Grant admin access to a user by email. Caller must already be an admin.
+    The target must have registered an account first.
+    """
+    require_admin(request)
+
+    target_email = email.strip().lower()
+    if not target_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+
+    db = SessionLocal()
+    try:
+        target = db.query(User).filter(User.email == target_email).first()
+        if not target:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No account found for {target_email}. They must register first.",
+            )
+
+        target.is_admin = True
+        db.commit()
+
+        return {
+            "message": f"{target_email} is now an admin.",
+            "email": target_email,
+            "is_admin": True,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/admin/demote")
+def admin_demote_user(request: Request, email: str = Form(...)):
+    """
+    Revoke admin access from a user by email. Caller must already be an admin.
+    Bootstrap admins (in ADMIN_EMAILS) cannot be demoted here — remove them
+    from the ADMIN_EMAILS env var instead.
+    """
+    require_admin(request)
+
+    target_email = email.strip().lower()
+    if not target_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+
+    if target_email in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=400,
+            detail="This user is a bootstrap admin and can't be demoted from here.",
+        )
+
+    db = SessionLocal()
+    try:
+        target = db.query(User).filter(User.email == target_email).first()
+        if not target:
+            raise HTTPException(
+                status_code=404, detail=f"No account found for {target_email}."
+            )
+
+        target.is_admin = False
+        db.commit()
+
+        return {
+            "message": f"{target_email} is no longer an admin.",
+            "email": target_email,
+            "is_admin": False,
+        }
     finally:
         db.close()
 
@@ -953,6 +1198,7 @@ async def me(request: Request):
         "id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
+        "is_admin": is_admin_user(current_user),
     }
 
 
@@ -1454,6 +1700,11 @@ def build_transcript_doc(
     doc.add_paragraph(meta)
 
     if segments:
+        # Apply automatic comma cleanup to each segment before grouping.
+        for seg in segments:
+            if seg.get("text"):
+                seg["text"] = restore_basic_commas(seg["text"])
+
         blocks = build_pause_aware_blocks(segments, pause_threshold=pause_threshold)
 
         for block in blocks:
@@ -1462,7 +1713,8 @@ def build_transcript_doc(
             p.add_run(f"[{timestamp}] ").bold = True
             p.add_run(block["text"])
     else:
-        for p in to_paragraphs(text):
+        cleaned_text = restore_basic_commas(text)
+        for p in to_paragraphs(cleaned_text):
             doc.add_paragraph(p)
 
     out = OUTPUT_DIR / f"lucidscript_{uuid.uuid4().hex[:8]}.docx"
@@ -1697,6 +1949,49 @@ def normalize_professional_english(text: str) -> str:
     ]
     for pattern, replacement in replacements:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def restore_basic_commas(text: str) -> str:
+    """
+    Conservative comma restoration for under-punctuated transcripts.
+    Only targets high-confidence cases so it won't insert wrong commas:
+      - after intro/transition words at the start of a sentence
+      - around "however" used mid-sentence
+      - before a coordinating conjunction that joins two clauses, but ONLY
+        when a pronoun-subject follows (a strong signal of an independent clause),
+        so "bread and butter" is left untouched.
+    """
+    intro_words = [
+        "However", "Meanwhile", "Therefore", "Furthermore", "Moreover",
+        "Finally", "First", "Second", "Third", "Also", "Additionally",
+        "Yes", "No", "Well", "Now", "Then", "Otherwise", "Instead",
+        "Nevertheless", "Nonetheless", "Consequently",
+    ]
+    for word in intro_words:
+        text = re.sub(
+            rf"(^|[.!?]\s+)({word})\s+(?=[A-Za-z])",
+            rf"\1\2, ",
+            text,
+        )
+
+    # commas around mid-sentence "however"
+    text = re.sub(r"(\w)\s+however\s+(\w)", r"\1, however, \2", text)
+
+    # comma before a conjunction that joins two clauses (pronoun-subject after).
+    # Only "but"/"so" — "and"/"or"/"yet" are excluded because they frequently
+    # form compound subjects ("Mom and I", "you or I") that must NOT take a comma.
+    pronouns = r"(?:I|you|he|she|we|they|it)"
+    text = re.sub(
+        rf"(\w)\s+(but|so)\s+({pronouns})\s+",
+        rf"\1, \2 \3 ",
+        text,
+    )
+
+    # tidy up any accidental spacing/double commas
+    text = re.sub(r"\s+,", ",", text)
+    text = re.sub(r",\s*,+", ",", text)
+
     return text
 
 
@@ -3153,7 +3448,7 @@ async function loadCurrentUser() {
     if (data.authenticated) {
       userIndicator.textContent = `Signed in as ${data.username}`;
 
-      if (data.email && __ADMIN_EMAILS__.includes(data.email.toLowerCase())) {
+      if (data.is_admin) {
         adminDashboardLink.classList.remove("hidden");
       }
     } else {
@@ -3616,7 +3911,7 @@ def _make_deposition_doc(
 
     for seg in labeled:
         speaker = seg.get("speaker", "Speaker 1")
-        text = (seg.get("text") or "").strip()
+        text = restore_basic_commas((seg.get("text") or "").strip())
         start = float(seg.get("start", 0.0))
 
         if not text:
