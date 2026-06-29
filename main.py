@@ -320,6 +320,16 @@ def admin_usage_page(request: Request):
         )
         registered_users = db.query(User).count()
 
+        languages = sorted({
+            (record.language or "").strip()
+            for record, _ in records
+            if (record.language or "").strip()
+        })
+        language_options = "".join(
+            f'<option value="{html.escape(lang.lower())}">{html.escape(lang)}</option>'
+            for lang in languages
+        )
+
         rows = ""
 
         for record, user in records:
@@ -334,8 +344,20 @@ def admin_usage_page(request: Request):
 
             status_class = "status-ok" if record.status == "completed" else "status-bad"
 
+            row_status = (record.status or "").lower()
+            row_mode = (record.mode or "").lower()
+            row_language = (record.language or "").lower()
+            row_translated = "yes" if record.translated else "no"
+            row_has_error = "yes" if (record.error_message or "").strip() else "no"
+
             rows += f"""
-            <tr>
+            <tr
+              data-status="{html.escape(row_status)}"
+              data-mode="{html.escape(row_mode)}"
+              data-language="{html.escape(row_language)}"
+              data-translated="{html.escape(row_translated)}"
+              data-has-error="{html.escape(row_has_error)}"
+            >
               <td>{html.escape(created)}</td>
               <td>{html.escape(username)}</td>
               <td>{html.escape(email)}</td>
@@ -443,6 +465,55 @@ def admin_usage_page(request: Request):
                 background: #171a21;
                 color: #eaeef3;
                 font-size: 14px;
+              }}
+
+              .filter-bar {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-bottom: 14px;
+              }}
+
+              .filter-group {{
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+              }}
+
+              .filter-group label {{
+                font-size: 12px;
+                color: rgba(234, 238, 243, 0.7);
+              }}
+
+              .filter-group select {{
+                padding: 10px 12px;
+                border-radius: 10px;
+                border: 1px solid #2a3042;
+                background: #171a21;
+                color: #eaeef3;
+                font-size: 14px;
+                min-width: 150px;
+              }}
+
+              .filter-reset {{
+                align-self: flex-end;
+                padding: 10px 14px;
+                border-radius: 10px;
+                border: 1px solid #2a3042;
+                background: #11141b;
+                color: #eaeef3;
+                font-size: 13px;
+                cursor: pointer;
+              }}
+
+              .filter-reset:hover {{
+                background: #1a1f29;
+              }}
+
+              .filter-count {{
+                margin-bottom: 12px;
+                font-size: 13px;
+                color: rgba(234, 238, 243, 0.7);
               }}
 
               .table-wrap {{
@@ -553,6 +624,56 @@ def admin_usage_page(request: Request):
               />
             </div>
 
+            <div class="filter-bar">
+              <div class="filter-group">
+                <label for="filter-status">Status</label>
+                <select id="filter-status">
+                  <option value="all">All</option>
+                  <option value="completed">Completed</option>
+                  <option value="failed">Failed</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="filter-mode">Mode</label>
+                <select id="filter-mode">
+                  <option value="all">All</option>
+                  <option value="audio">Audio</option>
+                  <option value="image">Image</option>
+                  <option value="text">Text</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="filter-language">Language</label>
+                <select id="filter-language">
+                  <option value="all">All</option>
+                  {language_options}
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="filter-translated">Translated</label>
+                <select id="filter-translated">
+                  <option value="all">All</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+
+              <div class="filter-group">
+                <label for="filter-errors">Errors</label>
+                <select id="filter-errors">
+                  <option value="all">All records</option>
+                  <option value="errors">Errors only</option>
+                </select>
+              </div>
+
+              <button id="filter-reset" class="filter-reset" type="button">Reset filters</button>
+            </div>
+
+            <div id="filter-count" class="filter-count"></div>
+
             <div class="table-wrap">
               <table>
                 <thead>
@@ -582,18 +703,83 @@ def admin_usage_page(request: Request):
           <script>
             const adminSearch = document.getElementById("admin-search");
             const adminUsageBody = document.getElementById("admin-usage-body");
+            const filterStatus = document.getElementById("filter-status");
+            const filterMode = document.getElementById("filter-mode");
+            const filterLanguage = document.getElementById("filter-language");
+            const filterTranslated = document.getElementById("filter-translated");
+            const filterErrors = document.getElementById("filter-errors");
+            const filterReset = document.getElementById("filter-reset");
+            const filterCount = document.getElementById("filter-count");
 
-            if (adminSearch && adminUsageBody) {{
+            if (adminUsageBody) {{
               const rows = Array.from(adminUsageBody.querySelectorAll("tr"));
+              // Only rows that carry data attributes are real records (skip the
+              // "no records" placeholder row, which has none).
+              const dataRows = rows.filter((row) => row.hasAttribute("data-status"));
 
-              adminSearch.addEventListener("input", () => {{
-                const query = adminSearch.value.trim().toLowerCase();
+              function applyFilters() {{
+                const query = (adminSearch ? adminSearch.value : "").trim().toLowerCase();
+                const statusVal = filterStatus ? filterStatus.value : "all";
+                const modeVal = filterMode ? filterMode.value : "all";
+                const languageVal = filterLanguage ? filterLanguage.value : "all";
+                const translatedVal = filterTranslated ? filterTranslated.value : "all";
+                const errorsVal = filterErrors ? filterErrors.value : "all";
 
-                rows.forEach((row) => {{
+                let visible = 0;
+
+                dataRows.forEach((row) => {{
                   const text = row.textContent.toLowerCase();
-                  row.style.display = text.includes(query) ? "" : "none";
+                  const matchesSearch = !query || text.includes(query);
+
+                  const matchesStatus =
+                    statusVal === "all" || row.dataset.status === statusVal;
+                  const matchesMode =
+                    modeVal === "all" || row.dataset.mode === modeVal;
+                  const matchesLanguage =
+                    languageVal === "all" || row.dataset.language === languageVal;
+                  const matchesTranslated =
+                    translatedVal === "all" || row.dataset.translated === translatedVal;
+                  const matchesErrors =
+                    errorsVal === "all" || row.dataset.hasError === "yes";
+
+                  const show =
+                    matchesSearch &&
+                    matchesStatus &&
+                    matchesMode &&
+                    matchesLanguage &&
+                    matchesTranslated &&
+                    matchesErrors;
+
+                  row.style.display = show ? "" : "none";
+                  if (show) visible += 1;
                 }});
-              }});
+
+                if (filterCount) {{
+                  filterCount.textContent =
+                    "Showing " + visible + " of " + dataRows.length + " records";
+                }}
+              }}
+
+              if (adminSearch) adminSearch.addEventListener("input", applyFilters);
+              if (filterStatus) filterStatus.addEventListener("change", applyFilters);
+              if (filterMode) filterMode.addEventListener("change", applyFilters);
+              if (filterLanguage) filterLanguage.addEventListener("change", applyFilters);
+              if (filterTranslated) filterTranslated.addEventListener("change", applyFilters);
+              if (filterErrors) filterErrors.addEventListener("change", applyFilters);
+
+              if (filterReset) {{
+                filterReset.addEventListener("click", () => {{
+                  if (adminSearch) adminSearch.value = "";
+                  if (filterStatus) filterStatus.value = "all";
+                  if (filterMode) filterMode.value = "all";
+                  if (filterLanguage) filterLanguage.value = "all";
+                  if (filterTranslated) filterTranslated.value = "all";
+                  if (filterErrors) filterErrors.value = "all";
+                  applyFilters();
+                }});
+              }}
+
+              applyFilters();
             }}
           </script>
           </body>
@@ -601,6 +787,7 @@ def admin_usage_page(request: Request):
         """
     finally:
         db.close()
+
 
 
 @app.post("/admin/promote")
